@@ -7,6 +7,13 @@
     <meta name="theme-color" content="#1a6fc4" />
     <meta name="description" content="מנתח תוצאות בדיקות רפואיות - עקוב אחר הטרנדים בבדיקות הדם שלך" />
     <title>מנתח בדיקות</title>
+    <script>
+      // Restore path redirected by 404.html
+      (function () {
+        var p = new URLSearchParams(window.location.search).get('p');
+        if (p) window.history.replaceState(null, '', '/' + p);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

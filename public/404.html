@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>מנתח בדיקות</title>
+  <script>
+    // GitHub Pages SPA redirect: send any 404 back to index.html
+    // keeping the path as a query parameter so the app can restore it.
+    var l = window.location;
+    l.replace(
+      l.protocol + '//' + l.host +
+      l.pathname.split('/').slice(0, 2).join('/') +
+      '/?p=' + encodeURIComponent(l.pathname.slice(1) + l.search) +
+      l.hash
+    );
+  </script>
+</head>
+<body></body>
+</html>
