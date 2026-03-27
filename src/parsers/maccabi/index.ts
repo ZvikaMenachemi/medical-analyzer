@@ -246,6 +246,12 @@ export async function parseMaccabiPdf(
   // can be matched by text-based parsing.
   const cleanedText = stripMaccabiPageChrome(fullTextJoined);
 
+  // DEBUG — remove after diagnosis
+  console.log('=== MACCABI RAW TEXT (first 2000 chars) ===');
+  console.log(fullTextJoined.slice(0, 2000));
+  console.log('=== MACCABI CLEANED TEXT (first 2000 chars) ===');
+  console.log(cleanedText.slice(0, 2000));
+
   if (!hasValidTestNames(allResults)) {
     // Position-based parsing found nothing useful — use text parsing exclusively.
     // Covers: Maccabi online portal PDFs and OCR'd vector-path PDFs.
