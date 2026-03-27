@@ -107,33 +107,52 @@ function hasValidTestNames(results: ParsedResult[]): boolean {
 
 /**
  * Parse Maccabi online portal fullText.
- * Format: "TestName (B|U|F) unit currentValue rangeMin rangeMax"
- * e.g., "Glucose (B) mg/dl 109 70 100"
+ *
+ * Three patterns handled:
+ *   A) "TestName (B|U|F)  unit  value  min  max"   — original high-confidence
+ *   B) "TestName  unit  value  min  max"            — tests without (B/U/F) suffix
+ *   C) "TestName  value  unit"                      — tests with no range shown
  */
 function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
   const results: ParsedResult[] = [];
+  const seen = new Set<string>();
 
-  // Primary: "Word(s) (B|U|F)  unit  value  min  max"
-  const re = /([A-Z][A-Za-z0-9 .%\-()]*?\([BUF]\))\s+([\w/%µ*^.³]+)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
+  function push(testName: string, unit: string, valueStr: string, rangeStr: string) {
+    const name = testName.trim();
+    const key  = name.toLowerCase();
+    // Skip if too short, already seen, or contains Hebrew (boilerplate)
+    if (key.length < 2 || seen.has(key) || /[\u05D0-\u05EA]/.test(name)) return;
+    seen.add(key);
 
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(fullText)) !== null) {
-    const testName = m[1].trim();
-    const unit     = m[2].trim();
-    const valueStr = m[3].replace(',', '.').trim();
-    const minStr   = m[4].replace(',', '.');
-    const maxStr   = m[5].replace(',', '.');
-
-    const { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
-    const rangeStr = `${minStr}-${maxStr}`;
+    const { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr.replace(',', '.').trim());
     const { range_min, range_max, raw_range } = parseRange(rangeStr);
     const is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
 
     results.push({
-      category: null, test_name: testName,
+      category: null, test_name: name,
       value_num, value_text, is_less_than, is_numeric,
-      unit, range_min, range_max, raw_range, is_abnormal, notes: '',
+      unit: unit.trim(), range_min, range_max, raw_range, is_abnormal, notes: '',
     });
+  }
+
+  // Pattern A: "TestName (B|U|F)  unit  value  min  max"
+  const reA = /([A-Z][A-Za-z0-9 .%\-()]*?\([BUF]\))\s+([\w/%µ*^.³]+)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = reA.exec(fullText)) !== null) {
+    push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
+  }
+
+  // Pattern B: "TestName  unit  value  min  max" — no (B/U/F) required.
+  // Anchor on known unit tokens to avoid false positives.
+  const reB = /([A-Z][A-Za-z0-9 .%+\-/#*()]{1,60}?)\s+(mg\/(?:dl|dL)|g\/dl|mmol\/l|nmol\/L|ng\/ml|mIu\/l|pg\/ml|10\*[36]\/micl|u\/l|U\/l|%|fl|pg\/cell)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
+  while ((m = reB.exec(fullText)) !== null) {
+    push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
+  }
+
+  // Pattern C: "TestName  value  unit" — no range shown (e.g. Cholesterol, LDL, HDL)
+  const reC = /([A-Z][A-Za-z0-9 .%+\-/#*()]{1,60}?)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(mg\/(?:dl|dL)|g\/dl|mmol\/l|nmol\/L|ng\/ml|mIu\/l|pg\/ml|u\/l|U\/l)(?!\s*\d)/g;
+  while ((m = reC.exec(fullText)) !== null) {
+    push(m[1], m[3], m[2], '');
   }
 
   return results;
