@@ -178,6 +178,16 @@ function stripMaccabiPageChrome(text: string): string {
   );
   // Navigation links
   cleaned = cleaned.replace(/(?:מעבר לתוכן מרכזי|מעבר לפעולות מהירות|הדפסה \/ שמירה)/g, ' ');
+  // Star icons (★ ☆) that appear next to tracked test names
+  cleaned = cleaned.replace(/[\u2605\u2606]/g, ' ');
+  // "השוואה" compare links (appear between test name and value)
+  cleaned = cleaned.replace(/השוואה/g, ' ');
+  // "הצגת תוצאות חריגות בבדיקה" checkbox label
+  cleaned = cleaned.replace(/הצגת תוצאות חריגות בבדיקה/g, ' ');
+  // Arrow characters ← → that appear as part of the compare link
+  cleaned = cleaned.replace(/[\u2190\u2192\u2039\u203A]/g, ' ');
+  // Category headings in Hebrew (כימיה בדם, המטולוגיה, אנדוקרינולוגיה, etc.)
+  cleaned = cleaned.replace(/[א-ת][\u05D0-\u05EA\s\-()]{2,}/g, ' ');
   return cleaned;
 }
 
