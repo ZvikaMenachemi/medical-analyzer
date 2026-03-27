@@ -158,6 +158,29 @@ function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
   return results;
 }
 
+/**
+ * Remove the repeated page header/footer that Maccabi online portal inserts
+ * on every printed page. Stripping it lets regex patterns match test results
+ * that are split across a page boundary (e.g. Triglycerides name on page N,
+ * value on page N+1).
+ */
+function stripMaccabiPageChrome(text: string): string {
+  let cleaned = text;
+  // Footer: "3/26/26, 2:32 PM Maccabi Online https://... 2/9"
+  cleaned = cleaned.replace(
+    /\d{1,2}\/\d{1,2}\/\d{2,4},?\s*\d+:\d+\s*(?:AM|PM)\s+Maccabi\s+Online\s+https?:\/\/\S+\s+\d+\/\d+/gi,
+    ' ',
+  );
+  // Repeated header block: "תוצאות בדיקות מעבדה ... DD/MM/YY | Doctor name"
+  cleaned = cleaned.replace(
+    /תוצאות בדיקות מעבדה[\s\S]{0,400}?\d{1,2}\/\d{1,2}\/\d{2,4}\s*\|\s*[^\n\u05D0-\u05EA]{0,40}/g,
+    ' ',
+  );
+  // Navigation links
+  cleaned = cleaned.replace(/(?:מעבר לתוכן מרכזי|מעבר לפעולות מהירות|הדפסה \/ שמירה)/g, ' ');
+  return cleaned;
+}
+
 export async function parseMaccabiPdf(
   pdfDoc: pdfjsLib.PDFDocumentProxy,
   filename: string,
@@ -188,16 +211,26 @@ export async function parseMaccabiPdf(
   }
 
   const fullTextJoined = textParts.join('\n');
+  // Strip repeated page headers/footers so cross-page results (e.g. Triglycerides)
+  // can be matched by text-based parsing.
+  const cleanedText = stripMaccabiPageChrome(fullTextJoined);
 
-  // If position-based parsing found no valid results (test names are numbers / missing),
-  // fall back to full-text parsing which works for both:
-  //   1. Maccabi online portal PDFs (have text but unusual layout)
-  //   2. OCR'd vector-path PDFs
   if (!hasValidTestNames(allResults)) {
+    // Position-based parsing found nothing useful — use text parsing exclusively.
+    // Covers: Maccabi online portal PDFs and OCR'd vector-path PDFs.
     allResults.length = 0;
-    const textToParse = (totalItems === 0 && ocrText) ? ocrText : fullTextJoined;
-    const textResults = parseMaccabiOnlineText(textToParse);
-    allResults.push(...textResults);
+    const textToParse = (totalItems === 0 && ocrText) ? ocrText : cleanedText;
+    allResults.push(...parseMaccabiOnlineText(textToParse));
+  } else {
+    // Position-based parsing found range-based tests. Supplement with text parsing
+    // to capture tests that have no reference range (Cholesterol, LDL, HDL, etc.)
+    // which are displayed differently on the page and missed by position-based logic.
+    const existingNames = new Set(allResults.map(r => r.test_name?.toLowerCase()));
+    for (const r of parseMaccabiOnlineText(cleanedText)) {
+      if (!existingNames.has(r.test_name?.toLowerCase())) {
+        allResults.push(r);
+      }
+    }
   }
 
   // Use OCR text for date if pdfjs found nothing
