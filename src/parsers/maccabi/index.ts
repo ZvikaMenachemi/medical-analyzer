@@ -135,24 +135,45 @@ function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
     });
   }
 
+  const UNITS = '(?:mg\\/(?:dl|dL)|g\\/dl|mmol\\/l|nmol\\/L|ng\\/ml|mIu\\/l|pg\\/ml|10\\*[36]\\/micl|u\\/l|U\\/l|%|fl|pg\\/cell)';
+
   // Pattern A: "TestName (B|U|F)  unit  value  min  max"
+  // Guard: reject if the captured name contains a space+digit (means we grabbed
+  // values from a neighbouring test that lacks (B/U/F)).
   const reA = /([A-Z][A-Za-z0-9 .%\-()]*?\([BUF]\))\s+([\w/%µ*^.³]+)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
   let m: RegExpExecArray | null;
   while ((m = reA.exec(fullText)) !== null) {
+    if (/\s\d/.test(m[1])) continue; // name contains a standalone number → skip
     push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
   }
 
   // Pattern B: "TestName  unit  value  min  max" — no (B/U/F) required.
   // Anchor on known unit tokens to avoid false positives.
-  const reB = /([A-Z][A-Za-z0-9 .%+\-/#*()]{1,60}?)\s+(mg\/(?:dl|dL)|g\/dl|mmol\/l|nmol\/L|ng\/ml|mIu\/l|pg\/ml|10\*[36]\/micl|u\/l|U\/l|%|fl|pg\/cell)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
+  const reB = new RegExp(
+    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)`,
+    'g',
+  );
   while ((m = reB.exec(fullText)) !== null) {
     push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
   }
 
-  // Pattern C: "TestName  value  unit" — no range shown (e.g. Cholesterol, LDL, HDL)
-  const reC = /([A-Z][A-Za-z0-9 .%+\-/#*()]{1,60}?)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(mg\/(?:dl|dL)|g\/dl|mmol\/l|nmol\/L|ng\/ml|mIu\/l|pg\/ml|u\/l|U\/l)(?!\s*\d)/g;
+  // Pattern C: "TestName  value  unit" — no range, name before value (LTR extraction)
+  const reC = new RegExp(
+    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(${UNITS})(?!\\s*\\d)`,
+    'g',
+  );
   while ((m = reC.exec(fullText)) !== null) {
     push(m[1], m[3], m[2], '');
+  }
+
+  // Pattern D: "value  unit  TestName" — no range, value before name (RTL extraction order).
+  // Handles Maccabi Online PDFs where RTL layout causes value to be extracted before name.
+  const reD = new RegExp(
+    `([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(${UNITS})\\s+([A-Z][A-Za-z0-9 .%+\\-/#*()-]{1,60})`,
+    'g',
+  );
+  while ((m = reD.exec(fullText)) !== null) {
+    push(m[3].trim(), m[2], m[1], '');
   }
 
   return results;
