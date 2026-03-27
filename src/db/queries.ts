@@ -365,7 +365,7 @@ export function exportAllData(): { sessions: Session[]; results: Result[]; group
  * Existing data is replaced entirely.
  * Returns the number of sessions restored.
  */
-export function importAllData(backup: { sessions: Session[]; results: Result[]; groups: Group[] }): number {
+export async function importAllData(backup: { sessions: Session[]; results: Result[]; groups: Group[] }): Promise<number> {
   const db = getDb();
 
   // Clear everything first
@@ -411,7 +411,7 @@ export function importAllData(backup: { sessions: Session[]; results: Result[]; 
     }
   }
 
-  saveDb();
+  await saveDb();
   return backup.sessions.length;
 }
 

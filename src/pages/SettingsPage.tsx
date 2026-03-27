@@ -49,7 +49,7 @@ export default function SettingsPage() {
           alert('קובץ גיבוי לא תקין');
           return;
         }
-        const count = importAllData(backup);
+        const count = await importAllData(backup);
         refreshStats();
         alert(`שוחזרו ${count} סשנים בהצלחה`);
       } catch {

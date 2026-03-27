@@ -65,6 +65,16 @@ export async function saveDb(): Promise<void> {
 export async function initDb(): Promise<Database> {
   if (db) return db;
 
+  // Request persistent storage so iOS doesn't evict our IndexedDB data
+  if (navigator.storage?.persist) {
+    navigator.storage.persist().catch(() => {/* ignore */});
+  }
+
+  // Save DB whenever the app goes to background (critical for iOS PWA)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveDb();
+  });
+
   // sql.js is CJS; Vite may wrap it as { default: fn } or expose fn directly
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mod = await import('sql.js') as any;
