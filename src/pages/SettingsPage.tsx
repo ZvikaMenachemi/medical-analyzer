@@ -42,7 +42,7 @@ export default function SettingsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const backup = JSON.parse(reader.result as string);
         if (!backup.sessions || !backup.results) {
