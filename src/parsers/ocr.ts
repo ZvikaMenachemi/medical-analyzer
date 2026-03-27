@@ -37,7 +37,8 @@ export async function ocrPdfDoc(
     canvas.height  = viewport.height;
     const ctx      = canvas.getContext('2d')!;
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await page.render({ canvasContext: ctx as any, viewport }).promise;
 
     const { data } = await worker.recognize(canvas);
     texts.push(data.text);
