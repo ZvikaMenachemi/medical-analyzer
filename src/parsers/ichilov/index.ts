@@ -96,21 +96,8 @@ function parseBlock(lines: string[]): ParsedResult | null {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 3. Extract ALL valid ranges "X-Y" (X < Y) — take the LAST one
-  //    (earlier numbers in the line may be D.T column values or graph artefacts)
-  let rangeStr = '';
-  const rangeRe = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
-  let rm: RegExpExecArray | null;
-  while ((rm = rangeRe.exec(fixed)) !== null) {
-    const r1 = parseFloat(rm[1].replace(',', '.'));
-    const r2 = parseFloat(rm[2].replace(',', '.'));
-    if (r1 < r2) {
-      rangeStr = `${rm[1].replace(',', '.')}-${rm[2].replace(',', '.')}`;
-    }
-  }
-
-  // 4. Find the test name: FIRST capital-letter English sequence that is
-  //    immediately followed by a number (the result value).
+  // 3. Find the test name: FIRST capital-letter English sequence that is
+  //    immediately followed by a number OR a misread-digit letter (the result value).
   //    Using a lazy quantifier ensures we stop at the shortest match.
   const nameRe = /\b([A-Z%#][A-Za-z0-9 \-+/.(,)]{1,50}?)(?=\s+[<>]?\d)/;
   const nameMatch = nameRe.exec(fixed);
@@ -129,7 +116,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
 
   if (name.length < 2) return null;
 
-  // 4b. Name continuation: "1110" is an OCR artefact for the line-wrap separator
+  // 3b. Name continuation: "1110" is an OCR artefact for the line-wrap separator
   //     in Ichilov multi-line test rows.  Text after "1110" (before the next
   //     uppercase word or digit) is the continuation of the test name.
   //     e.g. "LD (Lactate 176 U/L 1110 dehydrogenase) - b"  →  append "dehydrogenase) - b"
@@ -139,13 +126,40 @@ function parseBlock(lines: string[]): ParsedResult | null {
     if (tail) name = (name + ' ' + tail).trim();
   }
 
-  // 5. Value: first number immediately after the test name
-  const afterName = fixed.slice(nameMatch.index + nameMatch[0].length).trim();
-  const valueMatch = afterName.match(/^([<>]?\d+[.,]?\d*)/);
+  // 4. Value: first number after the cleaned test name.
+  //    We re-locate the end of the cleaned name in fixed (rather than using
+  //    nameMatch[0].length) because name-cleanup may strip absorbed noise tokens,
+  //    which would otherwise shift the value search past the real value.
+  //    We also skip a single OCR-noise token like "i" / "l" that represents a
+  //    digit OCR failed to read (e.g. "Amylase - blood i U/L H 28-100" where
+  //    "i" = misread "111").  In that case value_num will be null.
+  const nameEndInFixed = fixed.indexOf(name, nameMatch.index);
+  const searchFrom = nameEndInFixed >= 0 ? nameEndInFixed + name.length : nameMatch.index + nameMatch[0].length;
+  const afterName = fixed.slice(searchFrom).trim();
+
+  // Skip a single misread-digit token (one lowercase letter before a unit)
+  const afterNameSkipped = afterName.replace(/^([a-z])\s+(?=[A-Z%\\])/, '');
+  const valueMatch = afterNameSkipped.match(/^([<>]?\d+[.,]?\d*)/);
   if (!valueMatch) return null;
 
   const valueStr   = valueMatch[1].replace(',', '.');
-  const afterValue = afterName.slice(valueMatch[0].length).trim();
+  const afterValue = afterNameSkipped.slice(valueMatch[0].length).trim();
+
+  // 5. Range: search only in the text right after value+unit (within 80 chars),
+  //    not the entire fixed string.  This prevents a mega-chunk (when a block
+  //    spans several tests) from picking up the next test's range.
+  const rangeWindow = afterValue.slice(0, 80);
+  let rangeStr = '';
+  const rangeRe = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rangeRe.exec(rangeWindow)) !== null) {
+    const r1 = parseFloat(rm[1].replace(',', '.'));
+    const r2 = parseFloat(rm[2].replace(',', '.'));
+    if (r1 < r2) {
+      rangeStr = `${rm[1].replace(',', '.')}-${rm[2].replace(',', '.')}`;
+      break;  // first valid range after value is the correct one
+    }
+  }
 
   // 6. Unit: check the first 1–2 tokens after the value
   const tokens = afterValue.split(/\s+/).filter(Boolean);
