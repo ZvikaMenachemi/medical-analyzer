@@ -62,6 +62,10 @@ function parseMaccabiRow(items: TextItem[]): ParsedResult | null {
   if (!testName || testName.length < 2) return null;
 
   if (/תאריך|Date|מכבי|Maccabi|Patient|שם|ת\.ז/i.test(testName)) return null;
+  // Reject names that absorbed a neighbour's value (contain space+digit) or
+  // don't start with a letter / # / % (e.g. stray "/" from שמירה / הדפסה)
+  if (/\s\d/.test(testName)) return null;
+  if (!/^[A-Za-z#%.(]/.test(testName)) return null;
 
   let valueStr = '';
   let unitStr  = '';
