@@ -101,7 +101,15 @@ function parseBlock(lines: string[]): ParsedResult | null {
   //    Using a lazy quantifier ensures we stop at the shortest match.
   const nameRe = /\b([A-Z%#][A-Za-z0-9 \-+/.(,)]{1,50}?)(?=\s+[<>]?\d)/;
   const nameMatch = nameRe.exec(fixed);
-  if (!nameMatch) return null;
+  if (!nameMatch) {
+    // Reversed column layout: value precedes name at end of line
+    // e.g. "5 0 0.78 Free light chain Kappa/Lambda"
+    // Extract the last number immediately before a trailing capitalized phrase.
+    const rev = fixed.match(/\b([<>]?\d+[.,]?\d*)\s+([A-Z][A-Za-z0-9 \/(),-]{2,})\s*$/);
+    if (!rev) return null;
+    // Rearrange as "Name value" and re-parse recursively
+    return parseBlock([`${rev[2].trim()} ${rev[1]}`]);
+  }
 
   let name = nameMatch[1]
     .trim()
@@ -214,12 +222,13 @@ function tryParseCleanLine(line: string): ParsedResult | null {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!fixed || !/^[A-Z%#,.(0-9]/.test(fixed)) return null;
+  if (!fixed || !/[A-Za-z]/.test(fixed)) return null;
   if (!/\d/.test(fixed)) return null;
 
-  // Strip common leading punctuation, then a single leading D.T digit artefact
+  // Strip leading punctuation/noise chars (including leading "-" from RTL artefacts)
+  // e.g. "- ,Lambda light chain 1.46..." → "Lambda light chain 1.46..."
   // e.g. "6 Globulin - blood 17.3 gr/1l" → "Globulin - blood 17.3 gr/1l"
-  let clean = fixed.replace(/^[,.()\[\]'\-\s]+/, '').trim();
+  let clean = fixed.replace(/^[\s,.()\[\]'"\-]+/, '').trim();
   if (/^\d\s+[A-Z]/.test(clean)) clean = clean.replace(/^\d\s+/, '');
   if (!/^[A-Z%#(]/.test(clean)) return null;
 
@@ -275,10 +284,7 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // and blocks that returned null in Pass 1.  The `seen` set prevents doubles.
   for (const line of ocrText.split('\n')) {
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
-    const r = tryParseCleanLine(line);
-    const stripped = line.replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '').replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ').replace(/\s+/g, ' ').trim();
-    if (/[A-Z]/.test(stripped) && /\d/.test(stripped)) console.log('[Ichilov line]', r ? `✓ ${r.test_name}=${r.value_num}` : '✗', '|', stripped.slice(0, 100));
-    push(r);
+    push(tryParseCleanLine(line));
   }
 
   return results;
