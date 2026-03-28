@@ -10,6 +10,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import type { ParsedSession } from './types';
 import { isHadassahPdf, parseHadassahPdf } from './hadassah';
 import { isMaccabiPdf, parseMaccabiPdf }  from './maccabi';
+import { isIchilovPdf, parseIchilovPdf }  from './ichilov';
 import { parseGenericPdf }                 from './generic';
 import { ocrPdfDoc }                       from './ocr';
 
@@ -81,6 +82,10 @@ export async function parsePdf(
 
   if (isMaccabiPdf(fullText)) {
     return parseMaccabiPdf(pdfDoc, file.name, fullText);
+  }
+
+  if (isIchilovPdf(fullText)) {
+    return parseIchilovPdf(file.name, fullText);
   }
 
   return parseGenericPdf(pdfDoc, file.name);
