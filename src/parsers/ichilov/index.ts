@@ -285,6 +285,8 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     results.push(r);
   }
 
+  console.log('[Ichilov OCR]', ocrText.slice(0, 3000));
+
   // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
   // OCR may render final letter as ס or ם (common confusion); handle both.
   const chunks = ocrText.split(/ערכי הייחו[סם]/);
