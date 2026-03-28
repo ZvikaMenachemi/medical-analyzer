@@ -304,6 +304,8 @@ export async function parseMaccabiPdf(
   const dateMatch = textForDate.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
   if (dateMatch) isoDate = maccabiDateToIso(dateMatch[1]);
 
+  console.log('=== FINAL allResults ===', allResults.map(r => `${r.test_name}: ${r.value_num}`));
+
   return {
     record_num:        null,
     date:              isoDate,
