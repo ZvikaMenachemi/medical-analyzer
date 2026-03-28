@@ -109,8 +109,6 @@ function parseBlock(lines: string[]): ParsedResult | null {
     }
   }
 
-  console.log('[Ichilov fixed]', fixed.slice(0, 150));
-
   // 4. Find the test name: FIRST capital-letter English sequence that is
   //    immediately followed by a number (the result value).
   //    Using a lazy quantifier ensures we stop at the shortest match.
@@ -118,7 +116,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
   const nameMatch = nameRe.exec(fixed);
   if (!nameMatch) return null;
 
-  const name = nameMatch[1]
+  let name = nameMatch[1]
     .trim()
     .replace(/[,\s]+$/, '')   // strip trailing comma/space
     .replace(/\s+/g, ' ')
@@ -130,6 +128,16 @@ function parseBlock(lines: string[]): ParsedResult | null {
     .trim();
 
   if (name.length < 2) return null;
+
+  // 4b. Name continuation: "1110" is an OCR artefact for the line-wrap separator
+  //     in Ichilov multi-line test rows.  Text after "1110" (before the next
+  //     uppercase word or digit) is the continuation of the test name.
+  //     e.g. "LD (Lactate 176 U/L 1110 dehydrogenase) - b"  →  append "dehydrogenase) - b"
+  const tailMatch = fixed.match(/\b1110\b\s+([a-z][A-Za-z0-9 (),-]*?)(?=\s+[A-Z\d]|$)/);
+  if (tailMatch) {
+    const tail = tailMatch[1].trim().replace(/\s+/g, ' ');
+    if (tail) name = (name + ' ' + tail).trim();
+  }
 
   // 5. Value: first number immediately after the test name
   const afterName = fixed.slice(nameMatch.index + nameMatch[0].length).trim();
@@ -181,12 +189,14 @@ function tryParseCleanLine(line: string): ParsedResult | null {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!fixed || !/^[A-Z%#,.(]/.test(fixed)) return null;
+  if (!fixed || !/^[A-Z%#,.(0-9]/.test(fixed)) return null;
   if (!/\d/.test(fixed)) return null;
 
-  // Strip common leading punctuation
-  const clean = fixed.replace(/^[,.()\[\]'\-\s]+/, '').trim();
-  if (!/^[A-Z%#]/.test(clean)) return null;
+  // Strip common leading punctuation, then a single leading D.T digit artefact
+  // e.g. "6 Globulin - blood 17.3 gr/1l" → "Globulin - blood 17.3 gr/1l"
+  let clean = fixed.replace(/^[,.()\[\]'\-\s]+/, '').trim();
+  if (/^\d\s+[A-Z]/.test(clean)) clean = clean.replace(/^\d\s+/, '');
+  if (!/^[A-Z%#(]/.test(clean)) return null;
 
   // Reuse block-parser logic on single line
   return parseBlock([clean]);
@@ -203,20 +213,35 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   function push(r: ParsedResult | null) {
     if (!r || r.test_name.length < 2) return;
     const key = r.test_name.toLowerCase();
-    if (!seen.has(key)) { seen.add(key); results.push(r); }
+    // Prefix-aware dedup: "LD (Lactate dehydrogenase)" and "LD (Lactate" are the
+    // same test (one is truncated).  Keep the longer (more complete) name.
+    for (const existingKey of seen) {
+      const same = existingKey === key ||
+        existingKey.startsWith(key + ' ') ||
+        key.startsWith(existingKey + ' ');
+      if (same) {
+        if (key.length > existingKey.length) {
+          // Replace shorter entry with the longer, more complete name
+          seen.delete(existingKey);
+          seen.add(key);
+          const idx = results.findIndex(r2 => r2.test_name.toLowerCase() === existingKey);
+          if (idx !== -1) results[idx] = r;
+        }
+        return;
+      }
+    }
+    seen.add(key);
+    results.push(r);
   }
 
   // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
   // OCR may render final letter as ס or ם (common confusion); handle both.
   const chunks = ocrText.split(/ערכי הייחו[סם]/);
-  console.log('[Ichilov v2] chunks:', chunks.length, 'first chunk sample:', chunks[1]?.slice(0, 80));
 
   // chunk[0] = document header (patient info, column headers) — skip it.
   for (let i = 1; i < chunks.length; i++) {
     const lines = chunks[i].split('\n');
-    const r = parseBlock(lines);
-    console.log('[Ichilov v2] block', i, '→', r ? `${r.test_name} = ${r.value_num} ${r.unit}` : 'null');
-    push(r);
+    push(parseBlock(lines));
   }
 
   // ── Pass 2: line-by-line fallback ────────────────────────────────────────
@@ -225,9 +250,7 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // and blocks that returned null in Pass 1.  The `seen` set prevents doubles.
   for (const line of ocrText.split('\n')) {
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
-    const r = tryParseCleanLine(line);
-    if (r) console.log('[Ichilov fallback]', r.test_name, '=', r.value_num, r.unit, '| line:', line.slice(0, 80));
-    push(r);
+    push(tryParseCleanLine(line));
   }
 
   return results;
