@@ -120,24 +120,33 @@ function parseBlock(lines: string[]): ParsedResult | null {
   //    Using a lazy quantifier ensures we stop at the shortest match.
   const nameRe = /\b([A-Z%#][A-Za-z0-9 \-+/.(,)]{1,50}?)(?=\s+[<>]?\d)/;
   const nameMatch = nameRe.exec(fixed);
-  if (!nameMatch) {
-    // Reversed column layout: value precedes name at end of line
-    // e.g. "5 0 0.78 Free light chain Kappa/Lambda 0.26-1.65 ..."
-    // Require a decimal point in the value to avoid matching integer noise codes.
-    const rev = fixed.match(/\b([<>]?\d+[.,]\d+)\s+([A-Z][A-Za-z0-9 \/(),-]{2,})\s*$/);
-    if (!rev) return null;
-    // Rearrange as "Name value" and re-parse, then patch range from original line
+
+  // Reversed column layout: value precedes name at end of line.
+  // Also try reversed when nameRe matched but the name looks like graph noise
+  // (fewer lowercase letters than the reversed candidate, which is the real name).
+  // Allow integers (no decimal required) and optional trailing unit/% noise.
+  const rev = fixed.match(/\b([<>]?\d+[.,]?\d*)\s+([A-Z][A-Za-z0-9 \-\/(),.]{2,}?)\s*[%\w]*\s*$/);
+  const fwdLower = nameMatch ? (nameMatch[1].match(/[a-z]/g) ?? []).length : -1;
+  const revLower = rev ? (rev[2].match(/[a-z]/g) ?? []).length : -1;
+  const preferReversed = rev && (
+    !nameMatch ||
+    // Forward name has no lowercase but reversed does (graph noise heuristic)
+    (fwdLower === 0 && revLower > 0) ||
+    // Reversed name is clearly longer/better
+    (rev[2].trim().length > (nameMatch?.[1].trim().length ?? 0) + 2 && revLower >= fwdLower)
+  );
+
+  if (preferReversed && rev) {
     const r2 = parseBlock([`${rev[2].trim()} ${rev[1]}`]);
     if (!r2) return null;
     if (!r2.raw_range) {
-      const rangeFound = findRange(fixed, false);
-      const { range_min, range_max, raw_range } = parseRange(rangeFound);
-      r2.range_min = range_min;
-      r2.range_max = range_max;
-      r2.raw_range = raw_range;
+      const { range_min, range_max, raw_range } = parseRange(findRange(fixed, false));
+      r2.range_min = range_min; r2.range_max = range_max; r2.raw_range = raw_range;
     }
     return r2;
   }
+
+  if (!nameMatch) return null;
 
   let name = nameMatch[1]
     .trim()
@@ -285,8 +294,6 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     results.push(r);
   }
 
-  console.log('[Ichilov OCR]', ocrText.slice(0, 3000));
-
   // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
   // OCR may render final letter as ס or ם (common confusion); handle both.
   const chunks = ocrText.split(/ערכי הייחו[סם]/);
@@ -305,7 +312,7 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   const allLines = ocrText.split('\n');
   for (let li = 0; li < allLines.length; li++) {
     const line = allLines[li];
-    if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
+    if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL|Weizmann|Tel-Aviv|MINISTRY|MEDICAL CENTER/i.test(line)) continue;
     const r = tryParseCleanLine(line);
     if (r && !r.raw_range) {
       // Search adjacent lines (prev + next 2) for a range
