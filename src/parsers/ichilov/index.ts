@@ -72,6 +72,9 @@ function parseBlock(lines: string[]): ParsedResult | null {
     .map(l => l.trim())
     .filter(l => l.length > 0 && !/CamScanner|Confidential|09TIN/i.test(l))
     .join(' ')
+    // Remove Unicode bidirectional control marks (U+200E LTR, U+200F RTL, etc.)
+    // that Tesseract embeds between Hebrew and English text segments
+    .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')
     // Remove Hebrew characters (and common Hebrew punctuation)
     .replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ')
     // Remove graph visualisation patterns (3+ consecutive punctuation chars)
@@ -157,6 +160,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
  */
 function tryParseCleanLine(line: string): ParsedResult | null {
   const fixed = line
+    .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')
     .replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ')
     .replace(/[.*[\]|\\]{3,}/g, ' ')
     .replace(/(\d):(\d)/g, '$1.$2')
@@ -191,11 +195,14 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
   // OCR may render final letter as ס or ם (common confusion); handle both.
   const chunks = ocrText.split(/ערכי הייחו[סם]/);
+  console.log('[Ichilov v2] chunks:', chunks.length, 'first chunk sample:', chunks[1]?.slice(0, 80));
 
   // chunk[0] = document header (patient info, column headers) — skip it.
   for (let i = 1; i < chunks.length; i++) {
     const lines = chunks[i].split('\n');
-    push(parseBlock(lines));
+    const r = parseBlock(lines);
+    console.log('[Ichilov v2] block', i, '→', r ? `${r.test_name} = ${r.value_num} ${r.unit}` : 'null');
+    push(r);
   }
 
   // ── Pass 2: line-by-line fallback for tests without the Hebrew marker ────
