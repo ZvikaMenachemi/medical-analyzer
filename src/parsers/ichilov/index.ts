@@ -109,6 +109,8 @@ function parseBlock(lines: string[]): ParsedResult | null {
     }
   }
 
+  console.log('[Ichilov fixed]', fixed.slice(0, 150));
+
   // 4. Find the test name: FIRST capital-letter English sequence that is
   //    immediately followed by a number (the result value).
   //    Using a lazy quantifier ensures we stop at the shortest match.
