@@ -276,25 +276,7 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   function push(r: ParsedResult | null) {
     if (!r || r.test_name.length < 3) return;
     const key = r.test_name.toLowerCase();
-    // Prefix-aware dedup: "LD (Lactate dehydrogenase)" and "LD (Lactate" are the
-    // same test (one is truncated).  Keep the longer (more complete) name.
-    for (const existingKey of seen) {
-      const same = existingKey === key ||
-        existingKey.startsWith(key + ' ') ||
-        key.startsWith(existingKey + ' ');
-      if (same) {
-        if (key.length > existingKey.length) {
-          // Replace shorter entry with the longer, more complete name
-          seen.delete(existingKey);
-          seen.add(key);
-          const idx = results.findIndex(r2 => r2.test_name.toLowerCase() === existingKey);
-          if (idx !== -1) results[idx] = r;
-        }
-        return;
-      }
-    }
-    seen.add(key);
-    results.push(r);
+    if (!seen.has(key)) { seen.add(key); results.push(r); }
   }
 
   // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
