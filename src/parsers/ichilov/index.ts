@@ -57,7 +57,8 @@ function looksLikeUnit(tok: string): boolean {
 
 /** Column-header line that marks the start of a table section. */
 function isTableHeader(line: string): boolean {
-  return /Catalog\s+D[FT]?\s+Result/i.test(line);
+  // "Catalog" is the first column — be permissive since heb+eng OCR varies
+  return /\bCatalog\b/i.test(line);
 }
 
 /** Footer / CamScanner watermark line — stop parsing the current page. */
@@ -222,7 +223,14 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   const seen   = new Set<string>();
   const lines  = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
 
+  // DEBUG — remove after diagnosis
+  console.log('[Ichilov] OCR text (first 1500 chars):', ocrText.slice(0, 1500));
+
+  // Start searching immediately: the first ~20 lines are page header (patient info).
+  // tryParseResultLine rejects non-result lines, so false positives are very rare.
+  // isTableHeader re-enables after a footer break on multi-page PDFs.
   let inTable = false;
+  let linesBeforeTable = 0;
 
   for (const line of lines) {
     // (Re-)detect table header — can appear on each page
@@ -237,7 +245,12 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
       continue;
     }
 
-    if (!inTable) continue;
+    if (!inTable) {
+      linesBeforeTable++;
+      // After 30 lines with no table header found, assume OCR garbled "Catalog"
+      // and start parsing anyway — tryParseResultLine filters non-result lines.
+      if (linesBeforeTable < 30) continue;
+    }
     if (isJunkLine(line))  continue;
 
     const result = tryParseResultLine(line);
