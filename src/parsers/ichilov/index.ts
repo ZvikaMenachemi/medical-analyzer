@@ -125,18 +125,19 @@ function parseBlock(lines: string[]): ParsedResult | null {
   // Also try reversed when nameRe matched but the name looks like graph noise
   // (fewer lowercase letters than the reversed candidate, which is the real name).
   // Allow integers (no decimal required) and optional trailing unit/% noise.
-  const rev = fixed.match(/\b([<>]?\d+[.,]?\d*)\s+([A-Z][A-Za-z0-9 \-\/(),.]{2,}?)\s*[%\w]*\s*$/);
+  // Greedy match: capture the full trailing name (not lazy) so "RBC - blood" isn't cut to "RBC -"
+  const rev = fixed.match(/\b([<>]?\d+[.,]?\d*)\s+([A-Z][A-Za-z0-9 \-\/(),.%]{2,})\s*$/);
   const fwdLower = nameMatch ? (nameMatch[1].match(/[a-z]/g) ?? []).length : -1;
   const revLower = rev ? (rev[2].match(/[a-z]/g) ?? []).length : -1;
-  const preferReversed = rev && (
+  // Prefer reversed only when the reversed name has ≥3 lowercase letters (real word)
+  // and is clearly better than the forward match.
+  // revLower >= 3 prevents graph noise like "TOY i" (revL=1) or "SON i" (revL=1)
+  // from wrongly beating real short test names like MCV / MPV (fwdL=0).
+  const preferReversed = rev && revLower >= 3 && (
     !nameMatch ||
-    // Forward name has no lowercase but reversed does (graph noise heuristic)
-    (fwdLower === 0 && revLower > 0) ||
-    // Reversed name is clearly longer/better
-    (rev[2].trim().length > (nameMatch?.[1].trim().length ?? 0) + 2 && revLower >= fwdLower)
+    fwdLower === 0 ||
+    revLower > fwdLower + 1
   );
-
-  console.log('[pB]', JSON.stringify({fixed: fixed.slice(0,80), fwd: nameMatch?.[1], fwdL: fwdLower, rev: rev?.[2], revL: revLower, prefer: preferReversed}));
 
   if (preferReversed && rev) {
     const r2 = parseBlock([`${rev[2].trim()} ${rev[1]}`]);
