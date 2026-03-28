@@ -108,10 +108,15 @@ function hasValidTestNames(results: ParsedResult[]): boolean {
 /**
  * Parse Maccabi online portal fullText.
  *
- * Three patterns handled:
- *   A) "TestName (B|U|F)  unit  value  min  max"   — original high-confidence
- *   B) "TestName  unit  value  min  max"            — tests without (B/U/F) suffix
- *   C) "TestName  value  unit"                      — tests with no range shown
+ * Based on actual pdf.js extraction order (verified via console log), the
+ * Maccabi Online portal PDF uses these formats:
+ *
+ *   A) "TestName (B|U|F)  unit  value  min  max"  — flagged tests with range
+ *   B) "TestName  unit  value  min  max"           — other tests with range
+ *   C) "TestName  unit  value"                     — tests WITHOUT range (Cholesterol etc.)
+ *   D) "TestName  value  unit  min  max"           — value before unit (cross-page split)
+ *   Special: HbA1C "% Total Hb." complex unit
+ *   Special: eGFR — name starts with lowercase
  */
 function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
   const results: ParsedResult[] = [];
@@ -120,7 +125,6 @@ function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
   function push(testName: string, unit: string, valueStr: string, rangeStr: string) {
     const name = testName.trim();
     const key  = name.toLowerCase();
-    // Skip if too short, already seen, or contains Hebrew (boilerplate)
     if (key.length < 2 || seen.has(key) || /[\u05D0-\u05EA]/.test(name)) return;
     seen.add(key);
 
@@ -135,20 +139,23 @@ function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
     });
   }
 
-  const UNITS = '(?:mg\\/(?:dl|dL)|g\\/dl|mmol\\/l|nmol\\/L|ng\\/ml|mIu\\/l|pg\\/ml|10\\*[36]\\/micl|u\\/l|U\\/l|%|fl|pg\\/cell)';
+  // Known unit tokens used as anchors in patterns B, C, D
+  const UNITS = '(?:mg\\/(?:dl|dL)|g\\/dl|mmol\\/l|nmol\\/L|ng\\/ml|mIu\\/l|pg\\/ml'
+    + '|10\\*[36]\\/micl|ml\\/min\\/[\\d.]+\\S*|mg\\/g\\s+creat\\.?'
+    + '|u\\/l|U\\/l|%|fl|pg\\/cell)';
+
+  let m: RegExpExecArray | null;
 
   // Pattern A: "TestName (B|U|F)  unit  value  min  max"
-  // Guard: reject if the captured name contains a space+digit (means we grabbed
-  // values from a neighbouring test that lacks (B/U/F)).
+  // Guard: reject if name contains space+digit — means we grabbed a neighbour test.
   const reA = /([A-Z][A-Za-z0-9 .%\-()]*?\([BUF]\))\s+([\w/%µ*^.³]+)\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
-  let m: RegExpExecArray | null;
   while ((m = reA.exec(fullText)) !== null) {
-    if (/\s\d/.test(m[1])) continue; // name contains a standalone number → skip
+    if (/\s\d/.test(m[1])) continue;
     push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
   }
 
-  // Pattern B: "TestName  unit  value  min  max" — no (B/U/F) required.
-  // Anchor on known unit tokens to avoid false positives.
+  // Pattern B: "TestName  unit  value  min  max" — standard format with range.
+  // Covers: ALKP, ALT, AST, LDH, WBC, RBC, Hemoglobin, Hematocrit, MCV, …
   const reB = new RegExp(
     `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)`,
     'g',
@@ -157,23 +164,38 @@ function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
     push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
   }
 
-  // Pattern C: "TestName  value  unit" — no range, name before value (LTR extraction)
+  // Pattern C: "TestName  unit  value"  (NO range).
+  // Covers: Cholesterol, Triglycerides, HDL-Cholesterol, Non-HDL, LDL-Cholesterol.
+  // Note: unit comes BEFORE value in the Maccabi Online portal extraction.
   const reC = new RegExp(
-    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(${UNITS})(?!\\s*\\d)`,
+    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)(?!\\s*\\d)`,
     'g',
   );
   while ((m = reC.exec(fullText)) !== null) {
-    push(m[1], m[3], m[2], '');
+    push(m[1], m[2], m[3], '');
   }
 
-  // Pattern D: "value  unit  TestName" — no range, value before name (RTL extraction order).
-  // Handles Maccabi Online PDFs where RTL layout causes value to be extracted before name.
+  // Pattern D: "TestName  value  unit  min  max"  (value before unit).
+  // Covers: Creatinine (B) and TSH where value is on one page, unit+range on next.
+  // Name is short (≤15 alphanumeric chars, optionally followed by (B/U/F)).
   const reD = new RegExp(
-    `([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(${UNITS})\\s+([A-Z][A-Za-z0-9 .%+\\-/#*()-]{1,60})`,
+    `([A-Z][A-Za-z0-9]{1,15}(?:\\s*\\([BUF]\\))?)\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(${UNITS})\\s+(\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)`,
     'g',
   );
   while ((m = reD.exec(fullText)) !== null) {
-    push(m[3].trim(), m[2], m[1], '');
+    push(m[1], m[3], m[2], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
+  }
+
+  // HbA1C special case: "HbA1C  % Total Hb.  value  min  max"
+  const reHbA1C = /HbA1C\s+%\s+Total\s+Hb\.\s+([<>]?\s*\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)/g;
+  while ((m = reHbA1C.exec(fullText)) !== null) {
+    push('HbA1C', '% Total Hb.', m[1], `${m[2].replace(',', '.')}-${m[3].replace(',', '.')}`);
+  }
+
+  // eGFR special case: starts with lowercase "e"
+  const reEGFR = /eGFR\s+(ml\/min\/[\d.]+\S*)\s+([<>]?\s*\d+(?:[.,]\d+)?)/g;
+  while ((m = reEGFR.exec(fullText)) !== null) {
+    push('eGFR', m[1], m[2], '');
   }
 
   return results;
@@ -252,6 +274,10 @@ export async function parseMaccabiPdf(
   console.log('=== MACCABI CLEANED TEXT (first 2000 chars) ===');
   console.log(cleanedText.slice(0, 2000));
 
+  const textResults = parseMaccabiOnlineText(cleanedText);
+  console.log('=== parseMaccabiOnlineText results ===', textResults.map(r => r.test_name));
+  console.log('=== position-based allResults ===', allResults.map(r => r.test_name));
+
   if (!hasValidTestNames(allResults)) {
     // Position-based parsing found nothing useful — use text parsing exclusively.
     // Covers: Maccabi online portal PDFs and OCR'd vector-path PDFs.
@@ -263,7 +289,7 @@ export async function parseMaccabiPdf(
     // to capture tests that have no reference range (Cholesterol, LDL, HDL, etc.)
     // which are displayed differently on the page and missed by position-based logic.
     const existingNames = new Set(allResults.map(r => r.test_name?.toLowerCase()));
-    for (const r of parseMaccabiOnlineText(cleanedText)) {
+    for (const r of textResults) {
       if (!existingNames.has(r.test_name?.toLowerCase())) {
         allResults.push(r);
       }
