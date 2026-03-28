@@ -130,8 +130,9 @@ function parseBlock(lines: string[]): ParsedResult | null {
     const r2 = parseBlock([`${rev[2].trim()} ${rev[1]}`]);
     if (!r2) return null;
     if (!r2.raw_range) {
-      // Search for range in the original fixed string
-      const { range_min, range_max, raw_range } = parseRange(findRange(fixed, false));
+      const rangeFound = findRange(fixed, false);
+      console.log('[Ichilov rev] fixed:', fixed.slice(0, 120), '| rangeFound:', rangeFound);
+      const { range_min, range_max, raw_range } = parseRange(rangeFound);
       r2.range_min = range_min;
       r2.range_max = range_max;
       r2.raw_range = raw_range;
