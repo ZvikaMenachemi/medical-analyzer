@@ -59,6 +59,25 @@ function looksLikeUnit(tok: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Range helper (module-level so both parseBlock and reversed-column path use it)
+// ---------------------------------------------------------------------------
+
+function findRange(text: string, firstOnly: boolean): string {
+  const re = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
+  let m: RegExpExecArray | null;
+  let best = '';
+  while ((m = re.exec(text)) !== null) {
+    const r1 = parseFloat(m[1].replace(',', '.'));
+    const r2 = parseFloat(m[2].replace(',', '.'));
+    if (r1 < r2) {
+      best = `${m[1].replace(',', '.')}-${m[2].replace(',', '.')}`;
+      if (firstOnly) return best;
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // Core: parse a single test block
 // ---------------------------------------------------------------------------
 
@@ -161,25 +180,6 @@ function parseBlock(lines: string[]): ParsedResult | null {
 
   const valueStr   = valueMatch[1].replace(',', '.');
   const afterValue = afterNameSkipped.slice(valueMatch[0].length).trim();
-
-  // 5. Range: search after-value window first (first 80 chars after value).
-  //    If not found there, also search the text BEFORE the name — in some
-  //    Ichilov blocks the Normal column appears to the left of Catalog
-  //    (e.g. "135-250 LD (Lactate 176 U/L 1110 dehydrogenase) - b").
-  function findRange(text: string, firstOnly: boolean): string {
-    const re = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
-    let m: RegExpExecArray | null;
-    let best = '';
-    while ((m = re.exec(text)) !== null) {
-      const r1 = parseFloat(m[1].replace(',', '.'));
-      const r2 = parseFloat(m[2].replace(',', '.'));
-      if (r1 < r2) {
-        best = `${m[1].replace(',', '.')}-${m[2].replace(',', '.')}`;
-        if (firstOnly) return best;
-      }
-    }
-    return best;
-  }
 
   const afterValueWindow = afterValue.slice(0, 80);
   let rangeStr = findRange(afterValueWindow, true);
