@@ -87,8 +87,14 @@ function parseBlock(lines: string[]): ParsedResult | null {
 
   if (!combined || !/[A-Za-z]/.test(combined)) return null;
 
-  // 2. Fix colon used as decimal point (Tesseract OCR artefact: "13:8" → "13.8")
-  const fixed = combined.replace(/(\d):(\d)/g, '$1.$2');
+  // 2. Fix colon used as decimal point (Tesseract OCR artefact: "13:8" → "13.8"),
+  //    then strip date noise from Remark column (DD.MM.YY / DD.MM.YYYY) that
+  //    leaks into the combined text and tricks the name regex into stopping early.
+  const fixed = combined
+    .replace(/(\d):(\d)/g, '$1.$2')
+    .replace(/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   // 3. Extract ALL valid ranges "X-Y" (X < Y) — take the LAST one
   //    (earlier numbers in the line may be D.T column values or graph artefacts)
@@ -205,22 +211,13 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     push(r);
   }
 
-  // ── Pass 2: line-by-line fallback for tests without the Hebrew marker ────
-  // Collect lines that are NOT inside any ערכי הייחוס block.
-  if (chunks.length === 1) {
-    // No Hebrew markers found at all — parse every line individually.
-    for (const line of ocrText.split('\n')) {
-      push(tryParseCleanLine(line));
-    }
-  } else {
-    // Parse only the pre-marker header section (chunk[0]) line by line
-    // to catch any tests that appear before the first Hebrew remark.
-    const headerLines = chunks[0].split('\n');
-    for (const line of headerLines) {
-      // Skip obvious header/footer lines
-      if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
-      push(tryParseCleanLine(line));
-    }
+  // ── Pass 2: line-by-line fallback ────────────────────────────────────────
+  // Run on ALL lines of the whole document so we catch tests whose Remark
+  // column has a different text (e.g. Globulin, Albumin without Hebrew marker)
+  // and blocks that returned null in Pass 1.  The `seen` set prevents doubles.
+  for (const line of ocrText.split('\n')) {
+    if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
+    push(tryParseCleanLine(line));
   }
 
   return results;
