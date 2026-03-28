@@ -1,20 +1,28 @@
 /**
  * parsers/ichilov/index.ts — Tel Aviv Sourasky (Ichilov) lab PDF parser.
  *
- * Ichilov PDFs are scanned images — no text layer. The caller (parsers/index.ts)
- * runs OCR first and passes the resulting text here.
+ * Ichilov PDFs are scanned images. The caller runs OCR (Tesseract heb+eng)
+ * and passes the resulting text here.
  *
- * OCR table format (per page):
- *   Header:       "Catalog  DF  Result  Unit  Abn  Normal  Graph  Remark"
- *   Data line:    "[,.−]?TestName  value  [unit]  [H|L|B]  [range]  [graph junk]  [Hebrew]"
- *   Continuation: wrapped test-name text — no value, short English only
+ * Actual OCR format (heb+eng Tesseract):
+ *   - Each test result row is on a line that starts with Hebrew "ערכי הייחוס"
+ *     (= "reference values"), followed by the English data in RTL-mixed order:
+ *     sometimes:  [Hebrew] TestName  value  unit  [H|L|B]  range  [graph junk]
+ *     sometimes:  [Hebrew] [graph]   range  TestName  value  unit
+ *   - Continuation lines for wrapped test names start with "1110 בתאריך" or
+ *     just a Hebrew date string, followed by the rest of the English name.
  *
- * Date format in page header: DD.MM.YYYY
+ * Parsing strategy:
+ *   1. Split OCR text at every "ערכי הייחוס" occurrence — each chunk is one test.
+ *   2. For each chunk: strip Hebrew chars, strip graph noise, then extract
+ *      test name / value / unit / range with order-agnostic heuristics.
+ *   3. Fallback line-by-line pass for any tests that lack the Hebrew marker
+ *      (e.g. immunology tests with a different remark).
  */
 
 import type { ParsedSession, ParsedResult } from '../types';
-import { parseValue } from '../value-parser';
-import { parseRange } from '../range-parser';
+import { parseValue }      from '../value-parser';
+import { parseRange }      from '../range-parser';
 import { computeAbnormal } from '../abnormal-detector';
 
 export function isIchilovPdf(text: string): boolean {
@@ -26,8 +34,8 @@ export function isIchilovPdf(text: string): boolean {
 // ---------------------------------------------------------------------------
 
 function extractDate(text: string): string {
-  // The header contains the birth date (usually 4-digit year < 2000) followed
-  // by the test date (year ≥ 2020). Take the first 4-digit-year date ≥ 2020.
+  // Header contains birth date (year <2000) then test date (year ≥2020).
+  // Take the FIRST 4-digit-year date that falls in 2020-2050.
   const re = /(\d{1,2})\.(\d{1,2})\.(\d{4})/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -40,235 +48,171 @@ function extractDate(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Unit recognition
+// Unit recognition (handles common OCR variants)
 // ---------------------------------------------------------------------------
 
-// Unit tokens that can appear in Ichilov reports (handles common OCR variants).
 const UNIT_RE =
-  /^(?:mg\/[dDlL]{2}|mg\\[lL]|[Mm][Gg]\/[lL]|[Uu]\/[lL]|[Ii][Uu]\/[lL]|[Gg]\/[dDlL]{2}|[Gg]\/[lL]|gr\/[lL1]|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|[Ff][lLiI]|pg|%|10e[36]\/\S+|ml\/min\/\S+)$/;
+  /^(?:mg\/[dDlL]{2}|mg\\[lL]|[Mm][Gg]\/[lL]|[Uu]\/[lL]|[Ii][Uu]\/[lL]|[Gg]\/[dDlL]{2}|[Gg]\/[lL]|gr\/[lL1]{1,2}|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|[Ff][lLiI]|pg|%|10e[36]\/\S+|ml\/min\/\S+)$/;
 
 function looksLikeUnit(tok: string): boolean {
   return UNIT_RE.test(tok);
 }
 
 // ---------------------------------------------------------------------------
-// Line classification helpers
-// ---------------------------------------------------------------------------
-
-/** Column-header line that marks the start of a table section. */
-function isTableHeader(line: string): boolean {
-  // "Catalog" is the first column — be permissive since heb+eng OCR varies
-  return /\bCatalog\b/i.test(line);
-}
-
-/** Footer / CamScanner watermark line — stop parsing the current page. */
-function isFooterLine(line: string): boolean {
-  return /CamScanner|Confidential|09TIN|tp\s+Twn|top\s+Twn/i.test(line);
-}
-
-/** Lines that should be skipped (pure Hebrew, graph characters, page metadata). */
-function isJunkLine(line: string): boolean {
-  if (!line.trim()) return true;
-  // Mostly Hebrew characters → section header or Hebrew remark line
-  const hebCount = (line.match(/[\u05D0-\u05EA]/g) ?? []).length;
-  const totalNonSpace = line.replace(/\s/g, '').length;
-  if (totalNonSpace > 0 && hebCount / totalNonSpace > 0.35) return true;
-  // No letters or digits at all → pure punctuation / graph junk
-  if (!/[A-Za-z0-9]/.test(line)) return true;
-  return false;
-}
-
-/**
- * True when a line is an English continuation of the previous test name:
- * short, only English words, no isolated 2+-digit number, no range.
- */
-function isNameContinuation(line: string): boolean {
-  if (!line.trim()) return false;
-  const c = line.replace(/^[,. \s]+/, '').trim();   // keep leading "-"
-  if (!c || c.length > 60) return false;
-  if (!/[A-Za-z]/.test(c)) return false;
-  if (/\d{2,}/.test(c)) return false;               // has 2+ consecutive digits → value
-  if (/\d+\s*[-<>=~]\s*\d+/.test(c)) return false;  // has a range
-  const hebCount = (c.match(/[\u05D0-\u05EA]/g) ?? []).length;
-  if (hebCount > 2) return false;
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-// Core result-line parser
+// Core: parse a single test block
 // ---------------------------------------------------------------------------
 
 /**
- * Try to extract a ParsedResult from a single OCR data line.
- * Returns null if the line doesn't look like a test-result row.
- *
- * Column order on the line (after leading noise is stripped):
- *   TestName  value  [unit]  [H|L|B]  range  [graph junk]  [Hebrew remarks]
+ * Given all text lines belonging to one test result (obtained by splitting on
+ * "ערכי הייחוס"), extract a ParsedResult.
  */
-function tryParseResultLine(line: string): ParsedResult | null {
-  // Strip leading OCR noise: punctuation, brackets, leading spaces
-  const clean = line.replace(/^[,.()\[\]'\-\s]+/, '').trim();
+function parseBlock(lines: string[]): ParsedResult | null {
+  // 1. Concatenate lines, strip Hebrew + graph noise
+  const combined = lines
+    .map(l => l.trim())
+    .filter(l => l.length > 0 && !/CamScanner|Confidential|09TIN/i.test(l))
+    .join(' ')
+    // Remove Hebrew characters (and common Hebrew punctuation)
+    .replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ')
+    // Remove graph visualisation patterns (3+ consecutive punctuation chars)
+    .replace(/[.*[\]|\\]{3,}/g, ' ')
+    // Remove isolated dots left from graph column
+    .replace(/(?<!\d)\.\s/g, ' ')
+    // Normalise whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  // Must start with a capital letter, %, or #
-  if (!/^[A-Z%#]/.test(clean)) return null;
+  if (!combined || !/[A-Za-z]/.test(combined)) return null;
 
-  // Must contain at least one digit
-  if (!/\d/.test(clean)) return null;
+  // 2. Fix colon used as decimal point (Tesseract OCR artefact: "13:8" → "13.8")
+  const fixed = combined.replace(/(\d):(\d)/g, '$1.$2');
 
-  // --- Step 1: find the range (most reliably OCR'd token) ---
-  // Range: two numbers separated by -, <, =, ~ with no space around separator
-  const rangeRe = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9.,])/g;
-  let bestRange: { str: string; index: number } | null = null;
+  // 3. Extract ALL valid ranges "X-Y" (X < Y) — take the LAST one
+  //    (earlier numbers in the line may be D.T column values or graph artefacts)
+  let rangeStr = '';
+  const rangeRe = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
   let rm: RegExpExecArray | null;
-  while ((rm = rangeRe.exec(clean)) !== null) {
+  while ((rm = rangeRe.exec(fixed)) !== null) {
     const r1 = parseFloat(rm[1].replace(',', '.'));
     const r2 = parseFloat(rm[2].replace(',', '.'));
     if (r1 < r2) {
-      // Pick the last valid range (graph column sometimes has small number pairs)
-      bestRange = {
-        str: `${rm[1].replace(',', '.')}-${rm[2].replace(',', '.')}`,
-        index: rm.index,
-      };
+      rangeStr = `${rm[1].replace(',', '.')}-${rm[2].replace(',', '.')}`;
     }
   }
 
-  const rangeStr  = bestRange?.str ?? '';
-  const rangeIndex = bestRange?.index ?? clean.length;
+  // 4. Find the test name: FIRST capital-letter English sequence that is
+  //    immediately followed by a number (the result value).
+  //    Using a lazy quantifier ensures we stop at the shortest match.
+  const nameRe = /\b([A-Z%#][A-Za-z0-9 \-+/.(,)]{1,50}?)(?=\s+[<>]?\d)/;
+  const nameMatch = nameRe.exec(fixed);
+  if (!nameMatch) return null;
 
-  // --- Step 2: everything before the range is "name + value + unit + abn" ---
-  const beforeRange = clean.slice(0, rangeIndex).trim();
+  const name = nameMatch[1]
+    .trim()
+    .replace(/[,\s]+$/, '')   // strip trailing comma/space
+    .replace(/\s+/g, ' ');
 
-  // Strip Hebrew remarks and graph characters that leaked into the beforeRange portion
-  const beforeRangeClean = beforeRange.replace(/[\u05D0-\u05EA]+/g, ' ').trim();
+  if (name.length < 2) return null;
 
-  // --- Step 3: find standalone abnormality flag (H, L, B) at end of beforeRange ---
-  // Must NOT be preceded by / or alphanumeric (to avoid matching "10e6/B")
-  const abnRe = /(?<![/a-zA-Z0-9])([HLB])(?![/a-zA-Z0-9])\s*$/;
-  const abnMatch = abnRe.exec(beforeRangeClean);
+  // 5. Value: first number immediately after the test name
+  const afterName = fixed.slice(nameMatch.index + nameMatch[0].length).trim();
+  const valueMatch = afterName.match(/^([<>]?\d+[.,]?\d*)/);
+  if (!valueMatch) return null;
+
+  const valueStr   = valueMatch[1].replace(',', '.');
+  const afterValue = afterName.slice(valueMatch[0].length).trim();
+
+  // 6. Unit: check the first 1–2 tokens after the value
+  const tokens = afterValue.split(/\s+/).filter(Boolean);
+  let unit = '';
+  for (const t of tokens.slice(0, 2)) {
+    if (looksLikeUnit(t)) { unit = t; break; }
+  }
+
+  // 7. Abnormality flag: standalone H, L, or B (not part of a unit or word)
+  const abnMatch = fixed.match(/(?<![/a-zA-Z0-9])([HLB])(?![/a-zA-Z0-9])/);
   const abnFlag  = abnMatch ? abnMatch[1] : '';
-  const beforeAbn = abnMatch
-    ? beforeRangeClean.slice(0, abnMatch.index).trim()
-    : beforeRangeClean;
 
-  // --- Step 4: fix colon used as decimal separator (common Tesseract OCR error) ---
-  const fixed = beforeAbn.replace(/(\d):(\d)/g, '$1.$2').trim();
-
-  // --- Step 5: token-based reverse scan for unit then value ---
-  const tokens = fixed.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return null;
-
-  // Find unit: check last 2 tokens (garbled range may sit at the very end)
-  let unitIdx = tokens.length; // default: no unit
-  for (const tryIdx of [tokens.length - 1, tokens.length - 2]) {
-    if (tryIdx >= 0 && looksLikeUnit(tokens[tryIdx])) {
-      unitIdx = tryIdx;
-      break;
-    }
-  }
-
-  // Find value: last token before the unit that looks like a number
-  // Accept colon-decimal and plain integers
-  const numPat = /^[<>]?\d+(?:[.,:]?\d+)?$/;
-  let valueIdx = -1;
-  for (let i = unitIdx - 1; i >= 0; i--) {
-    if (numPat.test(tokens[i])) {
-      valueIdx = i;
-      break;
-    }
-  }
-
-  if (valueIdx < 0) return null;
-
-  const rawValueStr = tokens[valueIdx]
-    .replace(/,/g, '.')   // comma → period
-    .replace(/:/g, '.');   // colon → period (OCR artifact)
-
-  // Test name: all tokens before the value, stripped of leading noise
-  const rawName = tokens
-    .slice(0, valueIdx)
-    .join(' ')
-    .replace(/^[,.\-\s]+/, '')
-    .trim();
-  if (!rawName || rawName.length < 2) return null;
-
-  const unit = unitIdx < tokens.length ? tokens[unitIdx] : '';
-
-  // --- Step 6: compute final fields ---
-  const { value_num, value_text, is_less_than, is_numeric } = parseValue(rawValueStr);
+  // 8. Compute final fields
+  const { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
   const { range_min, range_max, raw_range } = parseRange(rangeStr);
 
-  // Prefer computed abnormality; fall back to explicit OCR flag
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
-  if (is_abnormal === null && abnFlag) {
-    is_abnormal = (abnFlag === 'H' || abnFlag === 'B') ? 1 : abnFlag === 'L' ? 1 : null;
-  }
+  if (is_abnormal === null && abnFlag) is_abnormal = 1;
 
   return {
-    category:    null,
-    test_name:   rawName,
+    category: null, test_name: name,
     value_num, value_text, is_less_than, is_numeric,
-    unit,
-    range_min, range_max, raw_range,
-    is_abnormal,
-    notes: '',
+    unit, range_min, range_max, raw_range, is_abnormal, notes: '',
   };
 }
 
 // ---------------------------------------------------------------------------
-// Main text parser
+// Fallback: line-by-line pass for tests without Hebrew marker
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a single cleaned (Hebrew-stripped) line as a test result.
+ * Used for immunology / other sections where "ערכי הייחוס" may be absent.
+ */
+function tryParseCleanLine(line: string): ParsedResult | null {
+  const fixed = line
+    .replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ')
+    .replace(/[.*[\]|\\]{3,}/g, ' ')
+    .replace(/(\d):(\d)/g, '$1.$2')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!fixed || !/^[A-Z%#,.]/.test(fixed)) return null;
+  if (!/\d/.test(fixed)) return null;
+
+  // Strip common leading punctuation
+  const clean = fixed.replace(/^[,.()\[\]'\-\s]+/, '').trim();
+  if (!/^[A-Z%#]/.test(clean)) return null;
+
+  // Reuse block-parser logic on single line
+  return parseBlock([clean]);
+}
+
+// ---------------------------------------------------------------------------
+// Main export
 // ---------------------------------------------------------------------------
 
 export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   const results: ParsedResult[] = [];
   const seen   = new Set<string>();
-  const lines  = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // DEBUG — remove after diagnosis
-  console.log('[Ichilov] OCR text (first 1500 chars):', ocrText.slice(0, 1500));
+  function push(r: ParsedResult | null) {
+    if (!r || r.test_name.length < 2) return;
+    const key = r.test_name.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); results.push(r); }
+  }
 
-  // Start searching immediately: the first ~20 lines are page header (patient info).
-  // tryParseResultLine rejects non-result lines, so false positives are very rare.
-  // isTableHeader re-enables after a footer break on multi-page PDFs.
-  let inTable = false;
-  let linesBeforeTable = 0;
+  // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
+  // OCR may render final letter as ס or ם (common confusion); handle both.
+  const chunks = ocrText.split(/ערכי הייחו[סם]/);
 
-  for (const line of lines) {
-    // (Re-)detect table header — can appear on each page
-    if (isTableHeader(line)) {
-      inTable = true;
-      continue;
+  // chunk[0] = document header (patient info, column headers) — skip it.
+  for (let i = 1; i < chunks.length; i++) {
+    const lines = chunks[i].split('\n');
+    push(parseBlock(lines));
+  }
+
+  // ── Pass 2: line-by-line fallback for tests without the Hebrew marker ────
+  // Collect lines that are NOT inside any ערכי הייחוס block.
+  if (chunks.length === 1) {
+    // No Hebrew markers found at all — parse every line individually.
+    for (const line of ocrText.split('\n')) {
+      push(tryParseCleanLine(line));
     }
-
-    // Page footer — next "Catalog" header will re-enable parsing
-    if (isFooterLine(line)) {
-      inTable = false;
-      continue;
-    }
-
-    if (!inTable) {
-      linesBeforeTable++;
-      // After 30 lines with no table header found, assume OCR garbled "Catalog"
-      // and start parsing anyway — tryParseResultLine filters non-result lines.
-      if (linesBeforeTable < 30) continue;
-    }
-    if (isJunkLine(line))  continue;
-
-    const result = tryParseResultLine(line);
-    if (result) {
-      const key = result.test_name.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        results.push(result);
-      }
-    } else if (results.length > 0 && isNameContinuation(line)) {
-      // Append wrapped name fragment to the most recent result
-      const cont = line.replace(/^[,. \s]+/, '').trim();
-      if (cont) {
-        const last = results[results.length - 1];
-        seen.delete(last.test_name.toLowerCase());
-        last.test_name = (last.test_name + ' ' + cont).replace(/\s+/g, ' ').trim();
-        seen.add(last.test_name.toLowerCase());
-      }
+  } else {
+    // Parse only the pre-marker header section (chunk[0]) line by line
+    // to catch any tests that appear before the first Hebrew remark.
+    const headerLines = chunks[0].split('\n');
+    for (const line of headerLines) {
+      // Skip obvious header/footer lines
+      if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
+      push(tryParseCleanLine(line));
     }
   }
 
