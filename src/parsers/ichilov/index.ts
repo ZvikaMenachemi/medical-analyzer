@@ -145,20 +145,31 @@ function parseBlock(lines: string[]): ParsedResult | null {
   const valueStr   = valueMatch[1].replace(',', '.');
   const afterValue = afterNameSkipped.slice(valueMatch[0].length).trim();
 
-  // 5. Range: search only in the text right after value+unit (within 80 chars),
-  //    not the entire fixed string.  This prevents a mega-chunk (when a block
-  //    spans several tests) from picking up the next test's range.
-  const rangeWindow = afterValue.slice(0, 80);
-  let rangeStr = '';
-  const rangeRe = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
-  let rm: RegExpExecArray | null;
-  while ((rm = rangeRe.exec(rangeWindow)) !== null) {
-    const r1 = parseFloat(rm[1].replace(',', '.'));
-    const r2 = parseFloat(rm[2].replace(',', '.'));
-    if (r1 < r2) {
-      rangeStr = `${rm[1].replace(',', '.')}-${rm[2].replace(',', '.')}`;
-      break;  // first valid range after value is the correct one
+  // 5. Range: search after-value window first (first 80 chars after value).
+  //    If not found there, also search the text BEFORE the name — in some
+  //    Ichilov blocks the Normal column appears to the left of Catalog
+  //    (e.g. "135-250 LD (Lactate 176 U/L 1110 dehydrogenase) - b").
+  function findRange(text: string, firstOnly: boolean): string {
+    const re = /(\d+[.,]?\d*)\s*[-<>=~]\s*(\d+[.,]?\d*)(?=\s|$|[^0-9,.])/g;
+    let m: RegExpExecArray | null;
+    let best = '';
+    while ((m = re.exec(text)) !== null) {
+      const r1 = parseFloat(m[1].replace(',', '.'));
+      const r2 = parseFloat(m[2].replace(',', '.'));
+      if (r1 < r2) {
+        best = `${m[1].replace(',', '.')}-${m[2].replace(',', '.')}`;
+        if (firstOnly) return best;
+      }
     }
+    return best;
+  }
+
+  const afterValueWindow = afterValue.slice(0, 80);
+  let rangeStr = findRange(afterValueWindow, true);
+  if (!rangeStr) {
+    // Fallback: search text before the name
+    const beforeName = fixed.slice(0, nameMatch.index);
+    rangeStr = findRange(beforeName, false);
   }
 
   // 6. Unit: check the first 1–2 tokens after the value
