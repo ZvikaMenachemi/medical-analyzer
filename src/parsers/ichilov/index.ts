@@ -140,7 +140,13 @@ function parseBlock(lines: string[]): ParsedResult | null {
   );
 
   if (preferReversed && rev) {
-    const r2 = parseBlock([`${rev[2].trim()} ${rev[1]}`]);
+    // Move trailing "%" to front: "Neutrophils % 63.7" → "% Neutrophils 63.7"
+    // so that nameRe can match "% Neutrophils" as the test name.
+    const revName = rev[2].trim();
+    const nameForBlock = revName.endsWith('%')
+      ? ('% ' + revName.slice(0, -1).trim())
+      : revName;
+    const r2 = parseBlock([`${nameForBlock} ${rev[1]}`]);
     if (!r2) return null;
     if (!r2.raw_range) {
       const { range_min, range_max, raw_range } = parseRange(findRange(fixed, false));
