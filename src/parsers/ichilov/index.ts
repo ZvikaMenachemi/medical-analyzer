@@ -104,8 +104,8 @@ function parseBlock(lines: string[]): ParsedResult | null {
   if (!nameMatch) {
     // Reversed column layout: value precedes name at end of line
     // e.g. "5 0 0.78 Free light chain Kappa/Lambda"
-    // Extract the last number immediately before a trailing capitalized phrase.
-    const rev = fixed.match(/\b([<>]?\d+[.,]?\d*)\s+([A-Z][A-Za-z0-9 \/(),-]{2,})\s*$/);
+    // Require a decimal point in the value to avoid matching integer noise codes.
+    const rev = fixed.match(/\b([<>]?\d+[.,]\d+)\s+([A-Z][A-Za-z0-9 \/(),-]{2,})\s*$/);
     if (!rev) return null;
     // Rearrange as "Name value" and re-parse recursively
     return parseBlock([`${rev[2].trim()} ${rev[1]}`]);
@@ -231,11 +231,9 @@ function tryParseCleanLine(line: string): ParsedResult | null {
   let clean = fixed.replace(/^[\s,.()\[\]'"\-]+/, '').trim();
   if (/^\d\s+[A-Z]/.test(clean)) clean = clean.replace(/^\d\s+/, '');
 
-  // If still starts with digit(s)/noise, strip leading non-name tokens so that
-  // reversed-column lines ("5. 0 0.78 Free light chain") can reach parseBlock.
-  if (!/^[A-Z%#(]/.test(clean)) {
-    clean = clean.replace(/^(?:\d{1,2}[.\s]*)+(?=\d*[.,]\d|\d+\s+[A-Z])/, '').trim();
-  }
+  // If still starts with digit(s)/noise, pass directly to parseBlock —
+  // the reversed-column handler there will extract value + name correctly.
+  // (Aggressive token-stripping was eating part of decimal values like 0.78)
   if (!clean) return null;
 
   const r = parseBlock([clean]);
