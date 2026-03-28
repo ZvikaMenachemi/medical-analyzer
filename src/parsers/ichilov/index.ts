@@ -310,7 +310,6 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
       const context = [allLines[li - 1], allLines[li + 1], allLines[li + 2]]
         .filter(Boolean).join(' ');
       const rangeStr = findRange(context, false);
-      console.log('[Ichilov adj]', r.test_name, '| ctx:', context.slice(0, 150), '| range:', rangeStr);
       if (rangeStr) {
         const { range_min, range_max, raw_range } = parseRange(rangeStr);
         r.range_min = range_min;
