@@ -275,7 +275,10 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // and blocks that returned null in Pass 1.  The `seen` set prevents doubles.
   for (const line of ocrText.split('\n')) {
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
-    push(tryParseCleanLine(line));
+    const r = tryParseCleanLine(line);
+    const stripped = line.replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '').replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/[A-Z]/.test(stripped) && /\d/.test(stripped)) console.log('[Ichilov line]', r ? `✓ ${r.test_name}=${r.value_num}` : '✗', '|', stripped.slice(0, 100));
+    push(r);
   }
 
   return results;
