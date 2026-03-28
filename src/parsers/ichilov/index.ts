@@ -238,9 +238,10 @@ function tryParseCleanLine(line: string): ParsedResult | null {
   }
   if (!clean) return null;
 
+  console.log('[Ichilov tryParse] clean:', clean.slice(0, 100));
   const r = parseBlock([clean]);
+  console.log('[Ichilov tryParse] result:', r ? `${r.test_name}=${r.value_num}` : 'null');
   // Reject garbage entries: name must be ≥3 chars and look like a real test name
-  // (not just 2-letter abbreviations like "WY" from address lines)
   if (!r || r.test_name.length < 3) return null;
   // Reject implausibly large values (>100000) or address-like numbers
   if (r.value_num !== null && r.value_num > 100000) return null;
