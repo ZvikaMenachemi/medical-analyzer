@@ -299,9 +299,25 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // Run on ALL lines of the whole document so we catch tests whose Remark
   // column has a different text (e.g. Globulin, Albumin without Hebrew marker)
   // and blocks that returned null in Pass 1.  The `seen` set prevents doubles.
-  for (const line of ocrText.split('\n')) {
+  // When a result has no range, look at adjacent lines for one.
+  const allLines = ocrText.split('\n');
+  for (let li = 0; li < allLines.length; li++) {
+    const line = allLines[li];
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
-    push(tryParseCleanLine(line));
+    const r = tryParseCleanLine(line);
+    if (r && !r.raw_range) {
+      // Search adjacent lines (prev + next 2) for a range
+      const context = [allLines[li - 1], allLines[li + 1], allLines[li + 2]]
+        .filter(Boolean).join(' ');
+      const rangeStr = findRange(context, false);
+      if (rangeStr) {
+        const { range_min, range_max, raw_range } = parseRange(rangeStr);
+        r.range_min = range_min;
+        r.range_max = range_max;
+        r.raw_range = raw_range;
+      }
+    }
+    push(r);
   }
 
   return results;
