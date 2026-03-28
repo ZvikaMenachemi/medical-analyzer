@@ -230,7 +230,14 @@ function tryParseCleanLine(line: string): ParsedResult | null {
   // e.g. "6 Globulin - blood 17.3 gr/1l" → "Globulin - blood 17.3 gr/1l"
   let clean = fixed.replace(/^[\s,.()\[\]'"\-]+/, '').trim();
   if (/^\d\s+[A-Z]/.test(clean)) clean = clean.replace(/^\d\s+/, '');
-  if (!/^[A-Z%#(]/.test(clean)) return null;
+
+  // If still starts with digit(s)/noise, strip leading non-name tokens so that
+  // reversed-column lines ("5. 0 0.78 Free light chain") can reach parseBlock.
+  // Strip groups of noise digits/dots until we hit a decimal value or a letter.
+  if (!/^[A-Z%#(]/.test(clean)) {
+    clean = clean.replace(/^(?:\d{1,2}[.\s]*)+(?=\d*[.,]\d|\d+\s+[A-Z])/, '').trim();
+  }
+  if (!clean) return null;
 
   // Reuse block-parser logic on single line
   return parseBlock([clean]);
