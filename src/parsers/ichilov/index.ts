@@ -233,14 +233,18 @@ function tryParseCleanLine(line: string): ParsedResult | null {
 
   // If still starts with digit(s)/noise, strip leading non-name tokens so that
   // reversed-column lines ("5. 0 0.78 Free light chain") can reach parseBlock.
-  // Strip groups of noise digits/dots until we hit a decimal value or a letter.
   if (!/^[A-Z%#(]/.test(clean)) {
     clean = clean.replace(/^(?:\d{1,2}[.\s]*)+(?=\d*[.,]\d|\d+\s+[A-Z])/, '').trim();
   }
   if (!clean) return null;
 
-  // Reuse block-parser logic on single line
-  return parseBlock([clean]);
+  const r = parseBlock([clean]);
+  // Reject garbage entries: name must be ≥3 chars and look like a real test name
+  // (not just 2-letter abbreviations like "WY" from address lines)
+  if (!r || r.test_name.length < 3) return null;
+  // Reject implausibly large values (>100000) or address-like numbers
+  if (r.value_num !== null && r.value_num > 100000) return null;
+  return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +256,7 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   const seen   = new Set<string>();
 
   function push(r: ParsedResult | null) {
-    if (!r || r.test_name.length < 2) return;
+    if (!r || r.test_name.length < 3) return;
     const key = r.test_name.toLowerCase();
     // Prefix-aware dedup: "LD (Lactate dehydrogenase)" and "LD (Lactate" are the
     // same test (one is truncated).  Keep the longer (more complete) name.
