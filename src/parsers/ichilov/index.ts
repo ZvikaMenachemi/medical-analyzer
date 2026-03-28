@@ -143,14 +143,22 @@ function parseBlock(lines: string[]): ParsedResult | null {
     // Move trailing "%" to front: "Neutrophils % 63.7" → "% Neutrophils 63.7"
     // so that nameRe can match "% Neutrophils" as the test name.
     const revName = rev[2].trim();
-    const nameForBlock = revName.endsWith('%')
-      ? ('% ' + revName.slice(0, -1).trim())
-      : revName;
-    const r2 = parseBlock([`${nameForBlock} ${rev[1]}`]);
+    const trailingPct = revName.endsWith('%');
+    const cleanRevName = trailingPct ? revName.slice(0, -1).trim() : revName;
+    const r2 = parseBlock([`${cleanRevName} ${rev[1]}`]);
     if (!r2) return null;
+    // Restore leading "%" to the test name (% was at end in OCR, belongs at front)
+    if (trailingPct && !r2.test_name.startsWith('%')) {
+      r2.test_name = '% ' + r2.test_name;
+    }
+    // Range: first try the original fixed string (may contain it),
+    // then the range from the block (already set if found).
     if (!r2.raw_range) {
-      const { range_min, range_max, raw_range } = parseRange(findRange(fixed, false));
-      r2.range_min = range_min; r2.range_max = range_max; r2.raw_range = raw_range;
+      const rangeInFixed = findRange(fixed, false);
+      if (rangeInFixed) {
+        const { range_min, range_max, raw_range } = parseRange(rangeInFixed);
+        r2.range_min = range_min; r2.range_max = range_max; r2.raw_range = raw_range;
+      }
     }
     return r2;
   }
@@ -305,18 +313,6 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     const line = allLines[li];
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL|Weizmann|Tel-Aviv|MINISTRY|MEDICAL CENTER/i.test(line)) continue;
     const r = tryParseCleanLine(line);
-    if (r && !r.raw_range) {
-      // Search adjacent lines (prev + next 2) for a range
-      const context = [allLines[li - 1], allLines[li + 1], allLines[li + 2]]
-        .filter(Boolean).join(' ');
-      const rangeStr = findRange(context, false);
-      if (rangeStr) {
-        const { range_min, range_max, raw_range } = parseRange(rangeStr);
-        r.range_min = range_min;
-        r.range_max = range_max;
-        r.raw_range = raw_range;
-      }
-    }
     push(r);
   }
 
