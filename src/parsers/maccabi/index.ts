@@ -156,22 +156,26 @@ function parseMaccabiOnlineText(fullText: string): ParsedResult[] {
 
   // Pattern B: "TestName  unit  value  min  max" — standard format with range.
   // Covers: ALKP, ALT, AST, LDH, WBC, RBC, Hemoglobin, Hematocrit, MCV, …
+  // Guard: reject if name contains space+digit — means we grabbed a neighbour test.
   const reB = new RegExp(
-    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)`,
+    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,40}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)\\s+(\\d+(?:[.,]\\d+)?)`,
     'g',
   );
   while ((m = reB.exec(fullText)) !== null) {
+    if (/\s\d/.test(m[1])) continue;
     push(m[1], m[2], m[3], `${m[4].replace(',', '.')}-${m[5].replace(',', '.')}`);
   }
 
   // Pattern C: "TestName  unit  value"  (NO range).
   // Covers: Cholesterol, Triglycerides, HDL-Cholesterol, Non-HDL, LDL-Cholesterol.
   // Note: unit comes BEFORE value in the Maccabi Online portal extraction.
+  // Guard: reject if name contains space+digit — means we grabbed a neighbour test.
   const reC = new RegExp(
-    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,60}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)(?!\\s*\\d)`,
+    `([A-Z][A-Za-z0-9 .%+\\-/#*()]{1,40}?)\\s+(${UNITS})\\s+([<>]?\\s*\\d+(?:[.,]\\d+)?)(?!\\s*\\d)`,
     'g',
   );
   while ((m = reC.exec(fullText)) !== null) {
+    if (/\s\d/.test(m[1])) continue;
     push(m[1], m[2], m[3], '');
   }
 
@@ -231,6 +235,8 @@ function stripMaccabiPageChrome(text: string): string {
   cleaned = cleaned.replace(/[\u2190\u2192\u2039\u203A]/g, ' ');
   // Category headings in Hebrew (כימיה בדם, המטולוגיה, אנדוקרינולוגיה, etc.)
   cleaned = cleaned.replace(/[א-ת][\u05D0-\u05EA\s\-()]{2,}/g, ' ');
+  // Strip isolated "/" left by "שמירה / הדפסה" (reversed order not matched by phrase strip above)
+  cleaned = cleaned.replace(/\s+\/\s+/g, ' ');
   return cleaned;
 }
 
@@ -268,16 +274,6 @@ export async function parseMaccabiPdf(
   // can be matched by text-based parsing.
   const cleanedText = stripMaccabiPageChrome(fullTextJoined);
 
-  // DEBUG — remove after diagnosis
-  console.log('=== MACCABI RAW TEXT (first 2000 chars) ===');
-  console.log(fullTextJoined.slice(0, 2000));
-  console.log('=== MACCABI CLEANED TEXT (first 2000 chars) ===');
-  console.log(cleanedText.slice(0, 2000));
-
-  const textResults = parseMaccabiOnlineText(cleanedText);
-  console.log('=== parseMaccabiOnlineText results ===', textResults.map(r => r.test_name));
-  console.log('=== position-based allResults ===', allResults.map(r => r.test_name));
-
   if (!hasValidTestNames(allResults)) {
     // Position-based parsing found nothing useful — use text parsing exclusively.
     // Covers: Maccabi online portal PDFs and OCR'd vector-path PDFs.
@@ -288,6 +284,7 @@ export async function parseMaccabiPdf(
     // Position-based parsing found range-based tests. Supplement with text parsing
     // to capture tests that have no reference range (Cholesterol, LDL, HDL, etc.)
     // which are displayed differently on the page and missed by position-based logic.
+    const textResults = parseMaccabiOnlineText(cleanedText);
     const existingNames = new Set(allResults.map(r => r.test_name?.toLowerCase()));
     for (const r of textResults) {
       if (!existingNames.has(r.test_name?.toLowerCase())) {
@@ -303,8 +300,6 @@ export async function parseMaccabiPdf(
   let isoDate = new Date().toISOString().slice(0, 10);
   const dateMatch = textForDate.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
   if (dateMatch) isoDate = maccabiDateToIso(dateMatch[1]);
-
-  console.log('=== FINAL allResults ===', allResults.map(r => `${r.test_name}: ${r.value_num}`));
 
   return {
     record_num:        null,
