@@ -136,6 +136,8 @@ function parseBlock(lines: string[]): ParsedResult | null {
     (rev[2].trim().length > (nameMatch?.[1].trim().length ?? 0) + 2 && revLower >= fwdLower)
   );
 
+  console.log('[pB]', JSON.stringify({fixed: fixed.slice(0,80), fwd: nameMatch?.[1], fwdL: fwdLower, rev: rev?.[2], revL: revLower, prefer: preferReversed}));
+
   if (preferReversed && rev) {
     const r2 = parseBlock([`${rev[2].trim()} ${rev[1]}`]);
     if (!r2) return null;
