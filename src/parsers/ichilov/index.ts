@@ -119,7 +119,13 @@ function parseBlock(lines: string[]): ParsedResult | null {
   const name = nameMatch[1]
     .trim()
     .replace(/[,\s]+$/, '')   // strip trailing comma/space
-    .replace(/\s+/g, ' ');
+    .replace(/\s+/g, ' ')
+    // Strip unit token absorbed when OCR mis-reads a digit as a letter
+    // e.g. "Amylase - blood i U/L H" (where "i" = misread "111") → "Amylase - blood"
+    .replace(/(\s+[A-Za-z]{1,5}\/[A-Za-z]{1,5}.*)$/, '')
+    .replace(/\s+[HLB]$/, '')     // strip trailing abnormality flag
+    .replace(/\s+[a-z]$/, '')     // strip trailing single lowercase (misread digit)
+    .trim();
 
   if (name.length < 2) return null;
 
@@ -173,7 +179,7 @@ function tryParseCleanLine(line: string): ParsedResult | null {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!fixed || !/^[A-Z%#,.]/.test(fixed)) return null;
+  if (!fixed || !/^[A-Z%#,.(]/.test(fixed)) return null;
   if (!/\d/.test(fixed)) return null;
 
   // Strip common leading punctuation
@@ -217,7 +223,9 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // and blocks that returned null in Pass 1.  The `seen` set prevents doubles.
   for (const line of ocrText.split('\n')) {
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL/i.test(line)) continue;
-    push(tryParseCleanLine(line));
+    const r = tryParseCleanLine(line);
+    if (r) console.log('[Ichilov fallback]', r.test_name, '=', r.value_num, r.unit, '| line:', line.slice(0, 80));
+    push(r);
   }
 
   return results;
