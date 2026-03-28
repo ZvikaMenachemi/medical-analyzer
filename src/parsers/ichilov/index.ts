@@ -186,7 +186,6 @@ function parseBlock(lines: string[]): ParsedResult | null {
   // 8. Compute final fields
   const { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
   const { range_min, range_max, raw_range } = parseRange(rangeStr);
-  console.log('[Ichilov range]', name, '| rangeStr:', rangeStr, '| min:', range_min, 'max:', range_max);
 
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
   if (is_abnormal === null && abnFlag) is_abnormal = 1;

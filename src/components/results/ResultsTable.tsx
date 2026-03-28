@@ -42,7 +42,7 @@ export default function ResultsTable({ results }: Props) {
                 {formatValue(r)}
               </td>
               <td style={{ color: 'var(--gray-md)' }}>{r.unit}</td>
-              <td style={{ color: 'var(--gray-md)', fontSize: 12 }}>{r.range_display}</td>
+              <td style={{ color: 'var(--gray-md)', fontSize: 12 }} dir="ltr">{r.range_display}</td>
               <td>{r.material ?? ''}</td>
               <td style={{ color: 'var(--gray-md)', fontSize: 12 }}>{r.lab_source ?? ''}</td>
               <td><StatusBadge isAbnormal={r.is_abnormal ?? null} /></td>
