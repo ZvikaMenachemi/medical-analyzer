@@ -76,6 +76,9 @@ export async function parsePdf(
     }
   }
 
+  console.log('[parser] fullText snippet:', fullText.slice(0, 300));
+  console.log('[parser] isHadassah:', isAnyHadassahDoc(fullText), 'isMaccabi:', isMaccabiPdf(fullText), 'isIchilov:', isIchilovPdf(fullText));
+
   if (isAnyHadassahDoc(fullText)) {
     return parseHadassahPdf(pdfDoc, file.name);
   }

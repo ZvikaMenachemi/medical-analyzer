@@ -154,7 +154,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
     // Range: first try the original fixed string (may contain it),
     // then the range from the block (already set if found).
     if (!r2.raw_range) {
-      const rangeInFixed = findRange(fixed, false);
+      const rangeInFixed = findRange(fixed, true);
       if (rangeInFixed) {
         const { range_min, range_max, raw_range } = parseRange(rangeInFixed);
         r2.range_min = range_min; r2.range_max = range_max; r2.raw_range = raw_range;
@@ -204,8 +204,22 @@ function parseBlock(lines: string[]): ParsedResult | null {
   const valueMatch = afterNameSkipped.match(/^([<>]?\d+[.,]?\d*)/);
   if (!valueMatch) return null;
 
-  const valueStr   = valueMatch[1].replace(',', '.');
-  const afterValue = afterNameSkipped.slice(valueMatch[0].length).trim();
+  let valueStr   = valueMatch[1].replace(',', '.');
+  let afterValue = afterNameSkipped.slice(valueMatch[0].length).trim();
+
+  // ── Extend name when the parsed "value" is actually a digit in the name ──
+  // Example: "Alpha 1 globulin electrophores 6.0 % H 1.9-4.8"
+  //   nameRe stops at "Alpha" because "1" looks like a value.
+  //   Detect: integer < 20 followed by letter-word(s) then a decimal number.
+  if (/^\d+$/.test(valueStr) && parseInt(valueStr, 10) < 20) {
+    const cont = afterValue.match(/^([a-zA-Z][a-zA-Z0-9 \-\/(),]*?)\s+(\d+[.,]\d+)\b/);
+    if (cont && !looksLikeUnit(cont[1].trim().split(/\s+/)[0])) {
+      name = (name + ' ' + valueStr + ' ' + cont[1]).trim().replace(/\s+/g, ' ');
+      valueStr = cont[2].replace(',', '.');
+      const valEndIdx = afterValue.indexOf(cont[2]) + cont[2].length;
+      afterValue = afterValue.slice(valEndIdx).trim();
+    }
+  }
 
   const afterValueWindow = afterValue.slice(0, 80);
   let rangeStr = findRange(afterValueWindow, true);
@@ -284,6 +298,7 @@ function tryParseCleanLine(line: string): ParsedResult | null {
 // ---------------------------------------------------------------------------
 
 export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
+  console.log('[Ichilov] OCR text:\n', ocrText);
   const results: ParsedResult[] = [];
   const seen   = new Set<string>();
 
