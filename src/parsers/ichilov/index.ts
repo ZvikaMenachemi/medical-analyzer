@@ -245,8 +245,20 @@ function parseBlock(lines: string[]): ParsedResult | null {
   const abnFlag  = abnMatch ? abnMatch[1] : '';
 
   // 8. Compute final fields
-  const { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
+  let { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
   const { range_min, range_max, raw_range } = parseRange(rangeStr);
+
+  // OCR missing-decimal fix: e.g. "22" read instead of "2.2".
+  // Detect: integer value, flag=L but value > range_max, and value/10 is within range.
+  if (
+    value_num !== null && range_max !== null && range_min !== null &&
+    Number.isInteger(value_num) && value_num > range_max * 1.5 &&
+    abnFlag === 'L' &&
+    (value_num / 10) >= range_min * 0.5 && (value_num / 10) <= range_max * 1.5
+  ) {
+    value_num = parseFloat((value_num / 10).toFixed(4));
+    value_text = String(value_num);
+  }
 
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
   if (is_abnormal === null && abnFlag) is_abnormal = 1;
