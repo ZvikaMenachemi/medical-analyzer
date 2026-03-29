@@ -112,7 +112,9 @@ function parseBlock(lines: string[]): ParsedResult | null {
   //    then strip date noise from Remark column (DD.MM.YY / DD.MM.YYYY) that
   //    leaks into the combined text and tricks the name regex into stopping early.
   const fixed = combined
-    .replace(/(\d):(\d)/g, '$1.$2')
+    .replace(/(\d):(\d)/g, '$1.$2')       // colon-as-decimal: "13:8" → "13.8"
+    .replace(/(\d):\./g, '$1.')            // colon-before-decimal: "3:.5" → "3.5"
+    .replace(/(\s*-\s*){2,}/g, ' - ')     // collapse double-dash: "- -" → "-"
     .replace(/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -350,7 +352,18 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     push(r);
   }
 
-  return results;
+  // ── Post-pass dedup: same test_name + same value → keep the one with range ─
+  // Handles cases where the same test appears with and without units (different
+  // dedup keys), e.g. "Protein, total" parsed from two places with same value.
+  const finalMap = new Map<string, ParsedResult>();
+  for (const r of results) {
+    const k = r.test_name.toLowerCase() + '|' + (r.value_num ?? r.value_text ?? '');
+    const ex = finalMap.get(k);
+    if (!ex || (r.raw_range && !ex.raw_range)) {
+      finalMap.set(k, r);
+    }
+  }
+  return Array.from(finalMap.values());
 }
 
 // ---------------------------------------------------------------------------
