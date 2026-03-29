@@ -314,7 +314,6 @@ function tryParseCleanLine(line: string): ParsedResult | null {
 // ---------------------------------------------------------------------------
 
 export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
-  console.log('[Ichilov] OCR text:\n', ocrText);
   const results: ParsedResult[] = [];
   // Map: dedup key → index in results array
   const seen = new Map<string, number>();
