@@ -232,10 +232,20 @@ function parseBlock(lines: string[]): ParsedResult | null {
 
   const afterValueWindow = afterValue.slice(0, 80);
   let rangeStr = findRange(afterValueWindow, true);
+  const beforeName = fixed.slice(0, nameMatch.index);
   if (!rangeStr) {
-    // Fallback: search text before the name
-    const beforeName = fixed.slice(0, nameMatch.index);
+    // Fallback: search text before the name (range printed before test name in some layouts)
     rangeStr = findRange(beforeName, false);
+  } else {
+    // Validate: if the parsed value is far outside the found range, the range may
+    // belong to a later test in the same (over-long) chunk. Try the before-name area.
+    const { range_min: rMin, range_max: rMax } = parseRange(rangeStr);
+    const vNum = parseFloat(String(valueStr).replace(',', '.'));
+    if (rMin !== null && rMax !== null && !isNaN(vNum) &&
+        (vNum > rMax * 2 || vNum < rMin * 0.3)) {
+      const altRange = findRange(beforeName, false);
+      if (altRange) rangeStr = altRange;
+    }
   }
 
   // 6. Unit: check the first 1–2 tokens after the value
@@ -350,8 +360,16 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   // Map: dedup key → index in results array
   const seen = new Map<string, number>();
 
+  const UNIT_START = /^(?:U\/L|mg\/[dDlL]|g\/[dDlL]|gr\/[l1]|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|MG\/L|10e[36]\/|ml\/min)\b/i;
+
   function push(r: ParsedResult | null) {
     if (!r || r.test_name.length < 3) return;
+    // Reject names that start with a unit token (line-fragment artefacts)
+    if (UNIT_START.test(r.test_name)) return;
+    // Reject very short all-caps names that look like graph noise (e.g. "SR LH")
+    if (/^[A-Z]{1,2}(?:\s+[A-Z]{1,2})+$/.test(r.test_name)) return;
+    // Reject names that contain only one real word plus noise (e.g. "Y ore")
+    if (r.test_name.split(/\s+/).length <= 2 && /^[A-Z]\s+[a-z]{2,5}$/.test(r.test_name)) return;
     // Include unit in key so the same test with different units (e.g. % vs gr/l)
     // is stored as separate rows (electrophoresis PDFs have both).
     const key = r.test_name.toLowerCase() + '|' + (r.unit ?? '');
