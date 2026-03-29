@@ -254,7 +254,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
     value_num !== null && range_max !== null && range_min !== null &&
     Number.isInteger(value_num) && value_num > range_max * 1.5 &&
     abnFlag === 'L' &&
-    (value_num / 10) >= range_min * 0.5 && (value_num / 10) <= range_max * 1.5
+    (value_num / 10) <= range_max * 1.5
   ) {
     value_num = parseFloat((value_num / 10).toFixed(4));
     value_text = String(value_num);
