@@ -96,6 +96,8 @@ function parseBlock(lines: string[]): ParsedResult | null {
     .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')
     // Remove Hebrew characters (and common Hebrew punctuation)
     .replace(/[\u05D0-\u05EA\u05F0-\u05F4\uFB1D-\uFB4E'"״׳]+/g, ' ')
+    // Normalize em-dash / en-dash to hyphen so "IgG — blood" parses correctly
+    .replace(/[–—]/g, ' - ')
     // Remove graph visualisation patterns (3+ consecutive punctuation chars)
     .replace(/[.*[\]|\\]{3,}/g, ' ')
     // Remove isolated dots left from graph column
@@ -277,7 +279,7 @@ function tryParseCleanLine(line: string): ParsedResult | null {
   // Strip leading punctuation/noise chars (including leading "-" from RTL artefacts)
   // e.g. "- ,Lambda light chain 1.46..." → "Lambda light chain 1.46..."
   // e.g. "6 Globulin - blood 17.3 gr/1l" → "Globulin - blood 17.3 gr/1l"
-  let clean = fixed.replace(/^[\s,.()\[\]'"\-]+/, '').trim();
+  let clean = fixed.replace(/[–—]/g, ' - ').replace(/^[\s,.()\[\]'"\-]+/, '').trim();
   if (/^\d\s+[A-Z]/.test(clean)) clean = clean.replace(/^\d\s+/, '');
 
   // If still starts with digit(s)/noise, pass directly to parseBlock —
@@ -300,12 +302,29 @@ function tryParseCleanLine(line: string): ParsedResult | null {
 export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   console.log('[Ichilov] OCR text:\n', ocrText);
   const results: ParsedResult[] = [];
-  const seen   = new Set<string>();
+  // Map: dedup key → index in results array
+  const seen = new Map<string, number>();
 
   function push(r: ParsedResult | null) {
     if (!r || r.test_name.length < 3) return;
-    const key = r.test_name.toLowerCase();
-    if (!seen.has(key)) { seen.add(key); results.push(r); }
+    // Include unit in key so the same test with different units (e.g. % vs gr/l)
+    // is stored as separate rows (electrophoresis PDFs have both).
+    const key = r.test_name.toLowerCase() + '|' + (r.unit ?? '');
+    if (!seen.has(key)) {
+      seen.set(key, results.length);
+      results.push(r);
+    } else {
+      // Replace existing if new result's value falls within its reference range
+      // but the existing result's value doesn't (catches OCR misreads like 24 vs 2.0).
+      const idx = seen.get(key)!;
+      const ex = results[idx];
+      const withinRange = (v: number | null, mn: number | null, mx: number | null) =>
+        v !== null && mn !== null && mx !== null && v >= mn * 0.5 && v <= mx * 2;
+      if (withinRange(r.value_num, r.range_min, r.range_max) &&
+          !withinRange(ex.value_num, ex.range_min, ex.range_max)) {
+        results[idx] = r;
+      }
+    }
   }
 
   // ── Pass 1: split on "ערכי הייחוס" — each chunk is one test result ──────
