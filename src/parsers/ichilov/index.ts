@@ -171,7 +171,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
 
   let name = nameMatch[1]
     .trim()
-    .replace(/[,\s]+$/, '')   // strip trailing comma/space
+    .replace(/[,\s\-]+$/, '')  // strip trailing comma/space/dash
     .replace(/\s+/g, ' ')
     // Strip unit token absorbed when OCR mis-reads a digit as a letter
     // e.g. "Amylase - blood i U/L H" (where "i" = misread "111") → "Amylase - blood"
@@ -248,16 +248,40 @@ function parseBlock(lines: string[]): ParsedResult | null {
   let { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
   const { range_min, range_max, raw_range } = parseRange(rangeStr);
 
-  // OCR missing-decimal fix: e.g. "22" read instead of "2.2".
-  // Detect: integer value, flag=L but value > range_max, and value/10 is within range.
-  if (
-    value_num !== null && range_max !== null && range_min !== null &&
-    Number.isInteger(value_num) && value_num > range_max * 1.5 &&
-    abnFlag === 'L' &&
-    (value_num / 10) <= range_max * 1.5
-  ) {
-    value_num = parseFloat((value_num / 10).toFixed(4));
-    value_text = String(value_num);
+  // ── Rescue implausible integer values ──────────────────────────────────────
+  // Handles two OCR failure modes when value is a large integer vs range_max:
+  //   Mode A — noise integer before real decimal:
+  //     "Uric 8618 blood 4.23 mg/dL 3.40-7.00"   → use 4.23
+  //     "Sodium - - 848 138.1 mmol/L 135-146"     → use 138.1
+  //   Mode B — missing decimal point:
+  //     "Gammaglobulin 22 gr/l L 6.6-13.0"        → 22÷10 = 2.2
+  //     "Phosphorus 301 mg/dL 2.50-4.50"           → 301÷100 = 3.01
+  if (value_num !== null && range_max !== null &&
+      Number.isInteger(value_num) && value_num > range_max * 1.5) {
+    // Find where the range starts in afterValue so we don't mistake
+    // range numbers for the real value.
+    const rangePart = rangeStr ? rangeStr.split('-')[0] : '';
+    const rangePos  = rangePart ? afterValue.indexOf(rangePart) : -1;
+    const beforeRange = rangePos > 0 ? afterValue.slice(0, rangePos) : '';
+    const decimalBefore = beforeRange.match(/\b(\d+[.,]\d+)\b/);
+    if (decimalBefore) {
+      // Mode A: use the decimal number that appears before the range string
+      const candidate = parseFloat(decimalBefore[1].replace(',', '.'));
+      if (candidate <= range_max * 2) {
+        value_num  = candidate;
+        value_text = String(candidate);
+      }
+    } else {
+      // Mode B: divide by increasing powers of 10 until within range
+      for (const divisor of [10, 100, 1000]) {
+        const candidate = parseFloat((value_num / divisor).toFixed(4));
+        if (candidate <= range_max * 1.5) {
+          value_num  = candidate;
+          value_text = String(candidate);
+          break;
+        }
+      }
+    }
   }
 
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
@@ -314,7 +338,6 @@ function tryParseCleanLine(line: string): ParsedResult | null {
 // ---------------------------------------------------------------------------
 
 export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
-  console.log('[Ichilov] OCR text:\n', ocrText);
   const results: ParsedResult[] = [];
   // Map: dedup key → index in results array
   const seen = new Map<string, number>();
