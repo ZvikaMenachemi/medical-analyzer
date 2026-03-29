@@ -200,7 +200,12 @@ function parseBlock(lines: string[]): ParsedResult | null {
   //    digit OCR failed to read (e.g. "Amylase - blood i U/L H 28-100" where
   //    "i" = misread "111").  In that case value_num will be null.
   const nameEndInFixed = fixed.indexOf(name, nameMatch.index);
-  const searchFrom = nameEndInFixed >= 0 ? nameEndInFixed + name.length : nameMatch.index + nameMatch[0].length;
+  const cleanedEnd = nameEndInFixed >= 0 ? nameEndInFixed + name.length : -1;
+  const matchedEnd  = nameMatch.index + nameMatch[0].length;
+  // Use the FURTHER of cleaned-name-end vs original-match-end.
+  // Cleaning strips trailing punctuation (e.g. " - -") so cleanedEnd may be
+  // shorter than matchedEnd, causing the value search to start too early.
+  const searchFrom = Math.max(cleanedEnd, matchedEnd);
   const afterName = fixed.slice(searchFrom).trim();
 
   // Skip a single misread-digit token (one lowercase letter before a unit)
@@ -330,6 +335,9 @@ function tryParseCleanLine(line: string): ParsedResult | null {
   if (!r || r.test_name.length < 3) return null;
   // Reject implausibly large values (>100000) or address-like numbers
   if (r.value_num !== null && r.value_num > 100000) return null;
+  // Reject names that start with a unit token — these are line-fragment artefacts
+  // e.g. "U/L dehydrogenase) - b" or "U/L glutamyltransferase"
+  if (/^(?:U\/L|mg\/[dDlL]|g\/[dDlL]|gr\/[l1]|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|MG\/L|10e[36]\/|ml\/min)\b/i.test(r.test_name)) return null;
   return r;
 }
 
@@ -383,23 +391,43 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   for (let li = 0; li < allLines.length; li++) {
     const line = allLines[li];
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL|Weizmann|Tel-Aviv|MINISTRY|MEDICAL CENTER/i.test(line)) continue;
+    // Strip BiDi marks before checking line prefixes
+    const lineNoBidi = line.replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '').trim();
     // Skip lines that start with a unit token — these are name-continuation fragments
     // e.g. "U/L dehydrogenase) - b" is the 2nd line of "LD (Lactate dehydrogenase) - b"
-    if (/^\s*(?:U\/L|mg\/[dDlL]{1,2}|g\/[dDlL]{1,2}|gr\/[l1]{1,2}|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|MG\/L|10e[36]\/|ml\/min)\b/i.test(line)) continue;
+    if (/^(?:U\/L|mg\/[dDlL]{1,2}|g\/[dDlL]{1,2}|gr\/[l1]{1,2}|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|MG\/L|10e[36]\/|ml\/min)\b/i.test(lineNoBidi)) continue;
     // Skip lines that are just the Ichilov line-wrap separator "1110 ..."
-    if (/^1110\b/.test(line.trim())) continue;
+    if (/^1110\b/.test(lineNoBidi)) continue;
     const r = tryParseCleanLine(line);
     push(r);
   }
 
-  // ── Post-pass dedup: same test_name + same value → keep the one with range ─
-  // Handles cases where the same test appears with and without units (different
-  // dedup keys), e.g. "Protein, total" parsed from two places with same value.
+  // ── Post-pass dedup: merge results with same value where one name is a
+  // prefix of the other (e.g. "Protein, total" vs "Protein, total blood").
+  // Keep the one with a range; if both have ranges keep the longer name.
   const finalMap = new Map<string, ParsedResult>();
   for (const r of results) {
     const k = r.test_name.toLowerCase() + '|' + (r.value_num ?? r.value_text ?? '');
     const ex = finalMap.get(k);
-    if (!ex || (r.raw_range && !ex.raw_range)) {
+    if (!ex) {
+      // Also check if existing entry is a prefix-match of this name (or vice versa)
+      let merged = false;
+      for (const [ek, ev] of finalMap) {
+        const sameVal = (r.value_num !== null && ev.value_num !== null && Math.abs(r.value_num - ev.value_num) < 0.001) ||
+                        (r.value_text === ev.value_text);
+        if (!sameVal) continue;
+        const rn = r.test_name.toLowerCase();
+        const en = ev.test_name.toLowerCase();
+        if (rn.startsWith(en) || en.startsWith(rn)) {
+          // Keep longer name with better range
+          const keep = (r.raw_range && !ev.raw_range) || rn.length > en.length ? r : ev;
+          finalMap.set(ek, keep);
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) finalMap.set(k, r);
+    } else if (r.raw_range && !ex.raw_range) {
       finalMap.set(k, r);
     }
   }
