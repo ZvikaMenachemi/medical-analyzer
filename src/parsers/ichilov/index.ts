@@ -420,24 +420,28 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     push(r);
   }
 
-  // ── Post-pass dedup: merge results with same value where one name is a
-  // prefix of the other (e.g. "Protein, total" vs "Protein, total blood").
-  // Keep the one with a range; if both have ranges keep the longer name.
+  // ── Post-pass dedup: same test_name + same value → keep the one with range.
+  // Also merge when one name is a strict prefix of the other AND units match
+  // (e.g. "Protein, total" vs "Protein, total blood", same value, same unit).
+  // IMPORTANT: do NOT merge entries with same name but different units (e.g.
+  // Alpha 1 globulin in % vs gr/l — both are valid distinct measurements).
   const finalMap = new Map<string, ParsedResult>();
   for (const r of results) {
     const k = r.test_name.toLowerCase() + '|' + (r.value_num ?? r.value_text ?? '');
     const ex = finalMap.get(k);
     if (!ex) {
-      // Also check if existing entry is a prefix-match of this name (or vice versa)
+      // Check for a prefix-name match with same value AND same unit
       let merged = false;
       for (const [ek, ev] of finalMap) {
-        const sameVal = (r.value_num !== null && ev.value_num !== null && Math.abs(r.value_num - ev.value_num) < 0.001) ||
-                        (r.value_text === ev.value_text);
-        if (!sameVal) continue;
+        const sameVal = (r.value_num !== null && ev.value_num !== null &&
+                         Math.abs(r.value_num - ev.value_num) < 0.001) ||
+                        (r.value_text !== undefined && r.value_text === ev.value_text);
+        const sameUnit = (r.unit ?? '') === (ev.unit ?? '');
+        if (!sameVal || !sameUnit) continue;
         const rn = r.test_name.toLowerCase();
         const en = ev.test_name.toLowerCase();
-        if (rn.startsWith(en) || en.startsWith(rn)) {
-          // Keep longer name with better range
+        if (rn !== en && (rn.startsWith(en) || en.startsWith(rn))) {
+          // Strict prefix (not equal names): keep longer name with better range
           const keep = (r.raw_range && !ev.raw_range) || rn.length > en.length ? r : ev;
           finalMap.set(ek, keep);
           merged = true;
