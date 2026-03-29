@@ -314,6 +314,7 @@ function tryParseCleanLine(line: string): ParsedResult | null {
 // ---------------------------------------------------------------------------
 
 export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
+  console.log('[Ichilov] OCR text:\n', ocrText);
   const results: ParsedResult[] = [];
   // Map: dedup key → index in results array
   const seen = new Map<string, number>();
@@ -359,6 +360,11 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
   for (let li = 0; li < allLines.length; li++) {
     const line = allLines[li];
     if (/Catalog\s+D|CamScanner|SOURASKY|ICHILOV|STATE OF ISRAEL|Weizmann|Tel-Aviv|MINISTRY|MEDICAL CENTER/i.test(line)) continue;
+    // Skip lines that start with a unit token — these are name-continuation fragments
+    // e.g. "U/L dehydrogenase) - b" is the 2nd line of "LD (Lactate dehydrogenase) - b"
+    if (/^\s*(?:U\/L|mg\/[dDlL]{1,2}|g\/[dDlL]{1,2}|gr\/[l1]{1,2}|mmol\/[lL]|nmol\/[lL]|ng\/m[lL]|MG\/L|10e[36]\/|ml\/min)\b/i.test(line)) continue;
+    // Skip lines that are just the Ichilov line-wrap separator "1110 ..."
+    if (/^1110\b/.test(line.trim())) continue;
     const r = tryParseCleanLine(line);
     push(r);
   }
