@@ -278,7 +278,9 @@ function parseBlock(lines: string[]): ParsedResult | null {
     const rangePart = rangeStr ? rangeStr.split('-')[0] : '';
     const rangePos  = rangePart ? afterValue.indexOf(rangePart) : -1;
     const beforeRange = rangePos > 0 ? afterValue.slice(0, rangePos) : '';
-    const decimalBefore = beforeRange.match(/\b(\d+[.,]\d+)\b/);
+    // Normalize OCR artefact: "4 .4" → "4.4" (space inserted before decimal point)
+    const normalizedBeforeRange = beforeRange.replace(/(\d)\s+\.(\d)/g, '$1.$2');
+    const decimalBefore = normalizedBeforeRange.match(/\b(\d+[.,]\d+)\b/);
     if (decimalBefore) {
       // Mode A: use the decimal number that appears before the range string
       const candidate = parseFloat(decimalBefore[1].replace(',', '.'));
@@ -297,6 +299,23 @@ function parseBlock(lines: string[]): ParsedResult | null {
           value_text = String(candidate);
           break;
         }
+      }
+    }
+  }
+
+  // Mode C: non-integer value clearly below range_min but OCR flag is H —
+  // contradictory: OCR inserted a spurious decimal point (e.g. "123" → "13.3").
+  // Multiply by 10 / 100 until the result is at least at range_min.
+  // e.g. Amylase 13.3 H (range 28-100) → 13.3 × 10 = 133 (plausible H value)
+  if (value_num !== null && range_min !== null && range_max !== null &&
+      !Number.isInteger(value_num) && value_num < range_min * 0.5 &&
+      abnFlag === 'H') {
+    for (const multiplier of [10, 100]) {
+      const candidate = parseFloat((value_num * multiplier).toFixed(2));
+      if (candidate >= range_min) {
+        value_num  = candidate;
+        value_text = String(candidate);
+        break;
       }
     }
   }
