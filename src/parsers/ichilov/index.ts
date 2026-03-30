@@ -286,8 +286,10 @@ function parseBlock(lines: string[]): ParsedResult | null {
         value_num  = candidate;
         value_text = String(candidate);
       }
-    } else {
-      // Mode B: divide by increasing powers of 10 until within range
+    } else if (abnFlag === 'L') {
+      // Mode B: divide by increasing powers of 10 until within range.
+      // Only applies when OCR flag is L (value should be low, decimal point was dropped).
+      // Do NOT apply for H values (e.g. ALT=58 with range 10-35 is genuinely high).
       for (const divisor of [10, 100, 1000]) {
         const candidate = parseFloat((value_num / divisor).toFixed(4));
         if (candidate <= range_max * 1.5) {
@@ -297,6 +299,11 @@ function parseBlock(lines: string[]): ParsedResult | null {
         }
       }
     }
+  }
+
+  // Debug log for specific tests to diagnose OCR misreads
+  if (/amylase|uric|alt|ast|ggt/i.test(name)) {
+    console.log(`[ichilov debug] ${name}: valueStr=${valueStr} value_num=${value_num} range=${rangeStr} abnFlag=${abnFlag} afterValue="${afterValue.slice(0,60)}"`);
   }
 
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
