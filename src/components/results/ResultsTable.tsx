@@ -38,7 +38,7 @@ export default function ResultsTable({ results }: Props) {
               <td style={{ whiteSpace: 'nowrap' }}>{r.date}</td>
               <td style={{ fontWeight: 600 }}>{r.test_name}</td>
               <td style={{ color: 'var(--gray-md)' }}>{r.category ?? ''}</td>
-              <td style={{ fontWeight: 600, color: r.is_abnormal === 1 ? 'var(--red)' : 'inherit' }}>
+              <td dir="ltr" style={{ fontWeight: 600, color: r.is_abnormal === 1 ? 'var(--red)' : 'inherit' }}>
                 {formatValue(r)}
               </td>
               <td style={{ color: 'var(--gray-md)' }}>{r.unit}</td>

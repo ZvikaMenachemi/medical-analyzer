@@ -412,6 +412,10 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     // these are reversed-layout rows where OCR placed the H/L/B flag + range
     // before the real test name (e.g. "H 0.0-15.0 ails wees" for RDW).
     if (/^[HLB]\s+\d/.test(r.test_name)) return;
+    // Reject short single-word OCR noise names (3-5 mixed-case letters) with
+    // small integer values — e.g. "Tim=2", "Twn=0", "Timm=2" from scan margins.
+    if (/^[A-Z][a-z]{2,4}$/.test(r.test_name) &&
+        r.value_num !== null && Number.isInteger(r.value_num) && r.value_num < 10) return;
     // Reject names that contain only one real word plus noise (e.g. "Y ore")
     if (r.test_name.split(/\s+/).length <= 2 && /^[A-Z]\s+[a-z]{2,5}$/.test(r.test_name)) return;
     // Include unit in key so the same test with different units (e.g. % vs gr/l)
