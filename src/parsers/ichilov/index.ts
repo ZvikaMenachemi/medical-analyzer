@@ -137,10 +137,14 @@ function parseBlock(lines: string[]): ParsedResult | null {
   // and is clearly better than the forward match.
   // revLower >= 3 prevents graph noise like "TOY i" (revL=1) or "SON i" (revL=1)
   // from wrongly beating real short test names like MCV / MPV (fwdL=0).
-  const preferReversed = rev && revLower >= 3 && (
-    !nameMatch ||
-    fwdLower === 0 ||
-    revLower > fwdLower + 1
+  //
+  // Exception: when the forward match looks like a flag+range absorbed as a name
+  // (e.g. "H 0.0-15.0 ails wees" for RDW), force reversed even for all-caps
+  // abbreviations (revLower=0) — the reversed path will yield the real name.
+  const forwardIsFlagName = nameMatch !== null && /^[HLB]\s+\d/.test(nameMatch[1]);
+  const preferReversed = rev && (
+    (revLower >= 3 && (!nameMatch || fwdLower === 0 || revLower > fwdLower + 1)) ||
+    forwardIsFlagName
   );
 
   if (preferReversed && rev) {
