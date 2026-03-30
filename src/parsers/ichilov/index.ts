@@ -467,8 +467,19 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
         const rn = r.test_name.toLowerCase();
         const en = ev.test_name.toLowerCase();
         if (rn !== en && (rn.startsWith(en) || en.startsWith(rn))) {
-          // Strict prefix (not equal names): keep longer name with better range
+          // Prefix case: one name is the beginning of the other.
+          // Keep the longer name (more context), unless the other has a range.
           const keep = (r.raw_range && !ev.raw_range) || rn.length > en.length ? r : ev;
+          finalMap.set(ek, keep);
+          merged = true;
+          break;
+        }
+        if (rn !== en && (rn.endsWith(en) || en.endsWith(rn))) {
+          // Suffix case: OCR added noise prefix (e.g. "Edin AST..." vs "AST...").
+          // Keep the SHORTER name — it's the clean one without the noise prefix.
+          const keep = (r.raw_range && !ev.raw_range) ? r :
+                       (!r.raw_range && ev.raw_range) ? ev :
+                       rn.length < en.length ? r : ev;
           finalMap.set(ek, keep);
           merged = true;
           break;
