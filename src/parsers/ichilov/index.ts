@@ -325,7 +325,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
   // Clear it so the result shows "לא ידוע" instead of a false-positive "חריג".
   // Example: GGT=26, OCR range="0-2" → 26 > 2×5=10 → clear range.
   if (value_num !== null && range_max !== null && value_num > range_max * 5) {
-    range_min = null; range_max = null; rangeStr = '';
+    range_min = null; range_max = null; raw_range = ''; rangeStr = '';
   }
 
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
