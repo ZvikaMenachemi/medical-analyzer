@@ -288,13 +288,20 @@ function parseBlock(lines: string[]): ParsedResult | null {
         value_num  = candidate;
         value_text = String(candidate);
       }
-    } else if (abnFlag === 'L') {
+    } else if (abnFlag === 'L' || abnFlag === '') {
       // Mode B: divide by increasing powers of 10 until within range.
-      // Only applies when OCR flag is L (value should be low, decimal point was dropped).
-      // Do NOT apply for H values (e.g. ALT=58 with range 10-35 is genuinely high).
+      // Applies when:
+      //   L flag — value should be low, decimal point was dropped (e.g. Gammaglobulin 22→2.2).
+      //   No flag — decimal dropped on a normal value (e.g. Lymphocytes No 21→2.1).
+      // Do NOT apply for H values (genuine highs like ALT=58 with range 10-35).
+      // Extra guard for no-flag case: candidate must land within plausible range
+      // (>= range_min*0.5) to avoid wrongly dividing genuine high integers
+      // (e.g. WBC=17 with range 4-11: 1.7 < 4*0.5=2 → rejected).
       for (const divisor of [10, 100, 1000]) {
         const candidate = parseFloat((value_num / divisor).toFixed(4));
-        if (candidate <= range_max * 1.5) {
+        const withinRange = candidate <= range_max * 1.5 &&
+          (abnFlag === 'L' || range_min === null || candidate >= range_min * 0.5);
+        if (withinRange) {
           value_num  = candidate;
           value_text = String(candidate);
           break;
@@ -397,6 +404,10 @@ export function parseIchilovOcrText(ocrText: string): ParsedResult[] {
     if (UNIT_START.test(r.test_name)) return;
     // Reject very short all-caps names that look like graph noise (e.g. "SR LH")
     if (/^[A-Z]{1,2}(?:\s+[A-Z]{1,2})+$/.test(r.test_name)) return;
+    // Reject names that start with an abnormality flag followed by a digit —
+    // these are reversed-layout rows where OCR placed the H/L/B flag + range
+    // before the real test name (e.g. "H 0.0-15.0 ails wees" for RDW).
+    if (/^[HLB]\s+\d/.test(r.test_name)) return;
     // Reject names that contain only one real word plus noise (e.g. "Y ore")
     if (r.test_name.split(/\s+/).length <= 2 && /^[A-Z]\s+[a-z]{2,5}$/.test(r.test_name)) return;
     // Include unit in key so the same test with different units (e.g. % vs gr/l)
