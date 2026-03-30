@@ -261,7 +261,7 @@ function parseBlock(lines: string[]): ParsedResult | null {
 
   // 8. Compute final fields
   let { value_num, value_text, is_less_than, is_numeric } = parseValue(valueStr);
-  const { range_min, range_max, raw_range } = parseRange(rangeStr);
+  let { range_min, range_max, raw_range } = parseRange(rangeStr);
 
   // ── Rescue implausible integer values ──────────────────────────────────────
   // Handles two OCR failure modes when value is a large integer vs range_max:
@@ -320,9 +320,12 @@ function parseBlock(lines: string[]): ParsedResult | null {
     }
   }
 
-  // Debug log for specific tests to diagnose OCR misreads
-  if (/amylase|uric|alt|ast|ggt/i.test(name)) {
-    console.log(`[ichilov debug] ${name}: valueStr=${valueStr} value_num=${value_num} range=${rangeStr} abnFlag=${abnFlag} afterValue="${afterValue.slice(0,60)}"`);
+  // Sanity-check range: if the value is more than 5× range_max (after all rescues),
+  // the range almost certainly belongs to a different row and was picked up as noise.
+  // Clear it so the result shows "לא ידוע" instead of a false-positive "חריג".
+  // Example: GGT=26, OCR range="0-2" → 26 > 2×5=10 → clear range.
+  if (value_num !== null && range_max !== null && value_num > range_max * 5) {
+    range_min = null; range_max = null; rangeStr = '';
   }
 
   let is_abnormal = computeAbnormal(value_num, is_less_than === 1, range_min, range_max, null);
